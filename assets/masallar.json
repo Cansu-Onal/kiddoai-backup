@@ -1,0 +1,47 @@
+[
+  {
+    "id": 1,
+    "baslik": "Aslan ile Fare",
+    "kategori": "Hayvanlar / Dostluk",
+    "karakterler": ["Aslan", "Fare"],
+    "metin": "Bir gün ormanlar kralı kocaman bir aslan, güneşin altında horul horul uyuyormuş. O sırada küçük bir fare oyun oynarken yanlışlıkla aslanın burnunun üzerine çıkmış. Aslan uyanmış ve tam fareyi yakalayacakken fare yalvarmış: 'Lütfen beni bırak, gün gelir ben de sana yardım ederim!' Aslan bu küçük farenin ona nasıl yardım edeceğini düşünerek gülmüş ama onu serbest bırakmış. Aradan zaman geçmiş, aslan avcıların kurduğu bir ağa yakalanmış. Ne kadar kükrediyse de kurtulamamış. Küçük fare aslanın kükremesini duymuş ve hemen yardıma koşmuş. Keskin dişleriyle ağın iplerini kemirmiş ve aslanı kurtarmış. O günden sonra kocaman aslan ve küçük fare en iyi arkadaş olmuşlar.",
+    "mesaj": "Kimseyi küçük görme, herkesin bir yardımı dokunabilir.",
+    "animasyon_ipuclari": "aslan_uyuyor, aslan_guluyor, fare_kemiriyor"
+  },
+  {
+    "id": 2,
+    "baslik": "Tavşan ile Kaplumbağa",
+    "kategori": "Hayvanlar / Sabır",
+    "karakterler": ["Tavşan", "Kaplumbağa"],
+    "metin": "Tavşan her zaman ne kadar hızlı koştuğuyla övünürmüş. Bir gün ağır ağır yürüyen kaplumbağayı görünce: 'Seninle yarışalım ama ben yarışı bitirip uyurum, sen hala yolda olursun' diye dalga geçmiş. Kaplumbağa nazikçe gülümsemiş ve kabul etmiş. Yarış başlamış, tavşan o kadar hızlıymış ki arayı hemen açmış. 'Nasıl olsa kaplumbağa bana yetişemez' diyerek bir ağacın altında uyuyakalmış. Ama kaplumbağa hiç durmadan, yavaş ama emin adımlarla yürümeye devam etmiş. Tavşan uyandığında bir de ne görsün? Kaplumbağa bitiş çizgisini geçmek üzereymiş! Tavşan ne kadar hızlı koşsa da artık çok geç kalmış. Kaplumbağa yarışı kazanmış.",
+    "mesaj": "Sabırla ve kararlılıkla çalışmak her zaman kazandırır.",
+    "animasyon_ipuclari": "tavsan_kosuyor, tavsan_uyuyor, kaplumbaga_yuruyor"
+  },
+  {
+    "id": 3,
+    "baslik": "Ağustos Böceği ile Karınca",
+    "kategori": "Hayvanlar / Sorumluluk",
+    "karakterler": ["Ağustos Böceği", "Karınca"],
+    "metin": "Sıcak bir yaz günü ağustos böceği elinde sazıyla şarkılar söylüyor, eğleniyormuş. O sırada karınca ise kış için yuvasına buğday taşıyormuş. Ağustos böceği, 'Gel beraber şarkı söyleyelim, bu güzel havanın tadını çıkaralım' demiş. Karınca, 'Ben kış için hazırlık yapmalıyım, sen de yapsan iyi olur' diye cevap vermiş. Kış gelip her yer karla kaplandığında, ağustos böceği çok acıkmış ve üşümüş. Karıncanın kapısını çalmış. Karınca ona yardım etmiş ama bir ders vermeyi de unutmamış: 'Yazın eğlenirken kışı da düşünmek gerekirdi dostum.'",
+    "mesaj": "Geleceğimiz için çalışmayı ve hazırlıklı olmayı unutmamalıyız.",
+    "animasyon_ipuclari": "bocek_sarki, karinca_calisiyor, kar_yagiyor"
+  },
+  {
+    "id": 4,
+    "baslik": "Karga ile Tilki",
+    "kategori": "Hayvanlar / Dikkat",
+    "karakterler": ["Karga", "Tilki"],
+    "metin": "Bir karga yerden büyük bir peynir parçası bulmuş ve bir ağaç dalına konmuş. Onu gören kurnaz tilki, peyniri kapmak için bir plan yapmış. Ağacın altına gelip, 'Aman Allah'ım, ne kadar güzel bir kargasın sen! Tüylerin ne kadar parlak! Eminim sesin de çok güzeldir, bir şarkı söyle de dinleyeyim' demiş. Karga bu güzel sözlere inanmış, şarkı söylemek için ağzını açtığı an peynir aşağı düşmüş. Tilki peyniri hemen kapmış ve 'Gördün mü karga dostum, her güzel söze inanmamak lazımdı' diyerek oradan uzaklaşmış.",
+    "mesaj": "Her tatlı söze hemen inanmamalı, dikkatli olmalıyız.",
+    "animasyon_ipuclari": "karga_agacta, tilki_konusuyor, peynir_dusuyor"
+  },
+  {
+    "id": 5,
+    "baslik": "Şehir Faresi ile Tarla Faresi",
+    "kategori": "Hayvanlar / Huzur",
+    "karakterler": ["Şehir Faresi", "Tarla Faresi"],
+    "metin": "Tarla faresi bir gün şehirli arkadaşını yemeğe davet etmiş. Ona taze mısır ve arpa ikram etmiş. Şehir faresi: 'Burada çok az yiyecek var, gel şehre gidelim, orada ziyafet çekeriz' demiş. Şehre gitmişler, masada peynirler, pastalar varmış. Tam yemeye başlayacaklarken büyük bir kedi gelmiş! İki fare korkudan deliklerine kaçmışlar. Tarla faresi eşyalarını toplamış: 'Benim soframda az yemek var ama orada korku yok. Senin sofrandaki ziyafette ise her an bir tehlike var. Ben evime, huzurlu tarlama dönüyorum' demiş.",
+    "mesaj": "Huzur içinde azıcık aş, korku içindeki zenginlikten daha iyidir.",
+    "animasyon_ipuclari": "fare_kaciyor, kedi_geliyor, sofra_detayi"
+  }
+]

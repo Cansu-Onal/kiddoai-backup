@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "687970650435",
+    "project_id": "kiddoai-690ac",
+    "storage_bucket": "kiddoai-690ac.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:687970650435:android:4ee64ab71195dcac6807f6",
+        "android_client_info": {
+          "package_name": "com.example.kiddoai"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "687970650435-ega0neerre68fdm18h0d4pg53mljjhc8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOqlbYzjEFjM-03aiqyIh5bJryhXZfEEM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "687970650435-ega0neerre68fdm18h0d4pg53mljjhc8.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
