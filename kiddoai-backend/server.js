@@ -145,9 +145,15 @@ function pickInterest(profile) {
   const turnsOnTopic =
     conversationState.turnCount - conversationState.lastTopicChangedAt;
 
-  if (!conversationState.childSeemsInterested && turnsOnTopic >= 2 && interests.length > 1) {
+  if (
+    !conversationState.childSeemsInterested &&
+    turnsOnTopic >= 2 &&
+    interests.length > 1
+  ) {
     const currentIndex = interests.indexOf(conversationState.currentInterest);
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % interests.length : 0;
+    const nextIndex =
+      currentIndex >= 0 ? (currentIndex + 1) % interests.length : 0;
+
     conversationState.currentInterest = interests[nextIndex];
     conversationState.lastTopicChangedAt = conversationState.turnCount;
   }
@@ -168,7 +174,9 @@ function pickGoal(profile) {
 
   if (turnsOnTopic >= 4 && goals.length > 1) {
     const currentIndex = goals.indexOf(conversationState.currentGoal);
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % goals.length : 0;
+    const nextIndex =
+      currentIndex >= 0 ? (currentIndex + 1) % goals.length : 0;
+
     conversationState.currentGoal = goals[nextIndex];
   }
 
@@ -256,6 +264,10 @@ function cleanReply(text) {
     .replace(/\bokay\b/gi, "tamam")
     .replace(/\bproblem\b/gi, "soru")
     .replace(/\banaliz\b/gi, "bakalım")
+    .replace(
+      /\b(hello|hi|yes|no|thanks|thank you|please|sorry|okay|ok|good|bad|nice|cool|great|what|why|how|and|or|but|ja|nein|und|ich|du|das|die|der|ist|nicht|gut|danke|bitte|hallo|tschüss)\b/gi,
+      ""
+    )
     .replace(/\s+/g, " ")
     .trim();
 
@@ -302,7 +314,15 @@ function buildSystemPrompt({ profile, interest, goal }) {
 
   return `
 Sen KiddoAI adlı çocuk dostu, güvenli ve sorumlu bir çocuk arkadaşsın.
-Türkçe konuşuyorsun. 5-10 yaş arası bir çocukla konuşuyorsun.
+
+DİL KURALI:
+- SADECE Türkçe konuş.
+- Almanca, İngilizce veya başka hiçbir dil kullanma.
+- Çocuğun mesajı farklı dilde olsa bile Türkçe cevap ver.
+- Cevabın tamamı doğal Türkçe olsun.
+- Yabancı kelime, yabancı selamlaşma veya yabancı ifade kullanma.
+
+5-10 yaş arası bir çocukla konuşuyorsun.
 
 KENDİ KARAKTERİN:
 - Adın ${avatarProfile.name}.
@@ -320,11 +340,12 @@ KENDİ KARAKTERİN:
 KESİN YASAK:
 - Asla "ben avatarım", "ben sanalım", "gerçek değilim", "ben yapay zekayım", "ben dil modeliyim" deme.
 - Asla İngilizce kelime kullanma.
+- Asla Almanca kelime kullanma.
 - Çocuğa bilimsel, karmaşık, soyut veya okul dersi gibi cevap verme.
 - Uzun açıklama yapma.
 - Çocuğa test çözdürür gibi davranma.
 - "Yerçekimi azalırsa ne olur?" gibi zor sorular sorma.
-- "Problem", "analiz", "suddenly", "okay" gibi kelimeleri kullanma.
+- "Problem", "analiz", "suddenly", "okay", "hello", "ja", "nein", "ich", "und", "danke" gibi kelimeleri kullanma.
 
 ÇOCUĞUN PROFİLİ:
 - İlgi alanları: ${profile.interests.join(", ") || "belirtilmedi"}.
@@ -367,6 +388,8 @@ ${goalInstruction}
 - Suddenly...
 - Şimdi bir problem düşünelim...
 - Bunu analiz edelim...
+- Hello!
+- Ja, das ist gut.
 
 GÜVENLİK:
 - Çocuk şiddet, kavga, vurma, dövme, tehdit, zarar verme gibi bir şey söylerse bunu asla normalleştirme.
@@ -443,7 +466,7 @@ app.post("/ask", async (req, res) => {
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
           messages: makeGroqMessages({ profile, interest, goal }),
-          temperature: 0.35,
+          temperature: 0.25,
           max_tokens: 90,
         }),
       },
@@ -494,7 +517,7 @@ app.post("/ask", async (req, res) => {
 
 app.post("/tts", async (req, res) => {
   try {
-    const text = (req.body.text || "").trim();
+    const text = cleanReply(req.body.text || "");
 
     if (!ELEVENLABS_API_KEY) {
       return res.status(200).json({
@@ -529,12 +552,14 @@ app.post("/tts", async (req, res) => {
         body: JSON.stringify({
           text,
           model_id: "eleven_multilingual_v2",
+          language_code: "tr",
+          apply_text_normalization: "on",
           voice_settings: {
-            stability: 0.55,
-            similarity_boost: 0.75,
-            style: 0.25,
+            stability: 0.7,
+            similarity_boost: 0.8,
+            style: 0.1,
             use_speaker_boost: true,
-            speed: 0.85,
+            speed: 0.88,
           },
         }),
       },

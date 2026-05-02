@@ -6,7 +6,9 @@ import 'package:kiddoai/pages/art_page.dart';
 import 'package:kiddoai/pages/chat_avatar_page.dart';
 import 'package:kiddoai/pages/global_usage_guard.dart';
 import 'package:kiddoai/pages/parent_panel_page.dart';
-import 'package:kiddoai/pages/story_page.dart';
+import 'package:kiddoai/pages/story_mode_page.dart';
+import 'package:kiddoai/pages/music_page.dart';
+import 'package:kiddoai/pages/beach_scenario_page.dart';
 
 class HomePage extends StatefulWidget {
   final String nickname;
@@ -27,13 +29,6 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   Future<void> _clickSound() async {
     await SystemSound.play(SystemSoundType.click);
-  }
-
-  void _showComingSoon(BuildContext context, String title) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("$title bölümü yakında hazır olacak ✨")),
-    );
   }
 
   void _showSnack(String message) {
@@ -166,7 +161,7 @@ class _HomePageState extends State<HomePage> {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => StoryPage(
+              builder: (_) => StoryModePage(
                 nickname: widget.nickname,
                 personality: widget.personality,
                 avatarName: "Arkadaşın",
@@ -182,7 +177,13 @@ class _HomePageState extends State<HomePage> {
         onTap: () async {
           await _clickSound();
           if (!context.mounted) return;
-          _showComingSoon(context, "Şarkı");
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const MusicPage(),
+            ),
+          );
         },
       ),
       _HomeMenuItem(
@@ -206,13 +207,19 @@ class _HomePageState extends State<HomePage> {
         },
       ),
       _HomeMenuItem(
-        title: "İngilizce",
-        image: "assets/icons/english.png",
+        title: "Deniz Oyunu",
+        image: "assets/icons/beach.jpeg",
         color: const Color(0xFF64B5F6),
         onTap: () async {
           await _clickSound();
           if (!context.mounted) return;
-          _showComingSoon(context, "İngilizce");
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const BeachScenarioPage(),
+            ),
+          );
         },
       ),
       _HomeMenuItem(

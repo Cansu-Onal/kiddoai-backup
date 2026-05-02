@@ -1,0 +1,136 @@
+{
+  "title": "Ece ve Parktaki Yeni Gün",
+  "startNode": "start",
+  "nodes": {
+    "start": {
+      "text": "Ece sabah uyandığında güneş ışıkları odasının içine yumuşacık süzülüyordu. Pencerenin yanındaki küçük kafeste yaşayan tavşanı Pamuk, burnunu oynatarak onu izliyordu. Bugün sıradan bir gün değildi. Ece, annesiyle birlikte daha önce hiç gitmediği büyük parka gidecekti. Rengârenk salıncakları, uzun kaydırakları ve kocaman oyun alanını düşününce içi kıpır kıpır oldu.\n\nKahvaltıdan sonra Ece hazırlandı, Pamuk'u da güvenli çantasına yerleştirdi. Parka vardıklarında her yer neşeli çocuk sesleriyle doluydu. Ece önce kaydıraklara ve salıncaklara baktı. Tam o sırada, kalabalığın biraz uzağında tek başına oturan bir çocuk gördü. Çocuk diğerlerini izliyor ama oyuna katılmıyordu. Yüzünde hafif bir hüzün vardı.",
+      "choicePrompt": "Ece bir an durup düşündü. Sence şimdi ne yapsın? Yanına git mi, yoksa önce oyna mı?",
+      "question": "Ece ne yapsın?",
+      "choices": [
+        {
+          "title": "Yanına git",
+          "image": "assets/story/talk_child.png",
+          "next": "meet_mert",
+          "scores": { "empathy": 2, "friendship": 1, "distance": 0 }
+        },
+        {
+          "title": "Önce oyna",
+          "image": "assets/story/play_slide.png",
+          "next": "play_first",
+          "scores": { "empathy": 0, "friendship": 0, "distance": 2 }
+        }
+      ]
+    },
+    "play_first": {
+      "text": "Ece önce kaydırağa doğru koştu. Uzun merdivenleri tırmandı, sonra kahkahalarla aşağı kaydı. Rüzgâr saçlarını uçuruyor, parkın neşesi ona çok iyi geliyordu. Birkaç kez daha kaydıktan sonra etrafına baktı. Çocukların çoğu arkadaşlarıyla oynuyordu.\n\nO an, parkın kenarında oturan çocuğu tekrar gördü. Hâlâ tek başınaydı. Ece'nin içinden küçük bir ses, 'Belki de onun da oynayacak bir arkadaşa ihtiyacı vardır,' dedi.",
+      "choicePrompt": "Ece yeniden karar vermeliydi. Sence Mert'e git mi, yoksa oynamaya devam et mi?",
+      "question": "Ece şimdi ne yapsın?",
+      "choices": [
+        {
+          "title": "Mert'e git",
+          "image": "assets/story/talk_child.png",
+          "next": "meet_mert",
+          "scores": { "empathy": 1, "friendship": 1, "distance": 0 }
+        },
+        {
+          "title": "Oynamaya devam et",
+          "image": "assets/story/play_slide.png",
+          "next": "distance_path",
+          "scores": { "empathy": 0, "friendship": 0, "distance": 2 }
+        }
+      ]
+    },
+    "meet_mert": {
+      "text": "Ece yavaş adımlarla çocuğun yanına gitti. Çok hızlı konuşmak istemedi, çünkü çocuk biraz çekingen görünüyordu. Yumuşak bir sesle, 'Merhaba, ben Ece,' dedi. Çocuk başını kaldırdı ve utangaçça gülümsedi. 'Ben de Mert,' diye cevap verdi.\n\nEce, Mert'in neden oyuna katılmadığını sordu. Mert yere bakarak, 'Yeni taşındık. Burada kimseyi tanımıyorum,' dedi. Ece onun yalnız hissettiğini anladı. Bazen yeni bir yerde olmak zor olabilirdi.",
+      "choicePrompt": "Ece, Mert'i biraz rahatlatmak istedi. Sence Pamuk'u göster mi, yoksa top oynamayı öner mi?",
+      "question": "Ece nasıl yaklaşsın?",
+      "choices": [
+        {
+          "title": "Pamuk'u göster",
+          "image": "assets/story/rabbit_show.png",
+          "next": "rabbit_friendship",
+          "scores": { "empathy": 2, "friendship": 2, "distance": 0 }
+        },
+        {
+          "title": "Top oynamayı öner",
+          "image": "assets/story/play_ball.png",
+          "next": "ball_friendship",
+          "scores": { "empathy": 0, "friendship": 2, "distance": 0 }
+        }
+      ]
+    },
+    "rabbit_friendship": {
+      "text": "Ece, Pamuk'un çantasını dikkatlice açtı. Bembeyaz tüylü tavşan, küçük burnunu oynatarak dışarı baktı. Mert'in gözleri bir anda parladı. 'Ne kadar tatlı!' dedi. Ece, 'İstersen onu nazikçe sevebilirsin,' diye fısıldadı.\n\nMert yavaşça elini uzattı ve Pamuk'un yumuşacık tüylerine dokundu. Az önceki çekingen hali biraz hafifledi. Ece de bunu görünce mutlu oldu. Bazen küçük bir paylaşım, iki çocuğun birbirine yaklaşması için yeterli olabilirdi.",
+      "choicePrompt": "Şimdi ikisi birlikte güzel bir şey yapabilir. Sence parkı keşfet mi, yoksa Pamuk ile oynayalım mı?",
+      "question": "Birlikte ne yapsınlar?",
+      "choices": [
+        {
+          "title": "Parkı keşfet",
+          "image": "assets/story/play_together.png",
+          "next": "explore_together",
+          "scores": { "empathy": 1, "friendship": 2, "distance": 0 }
+        },
+        {
+          "title": "Pamuk ile oynayalım",
+          "image": "assets/story/pet_rabbit.png",
+          "next": "quiet_path",
+          "scores": { "empathy": 1, "friendship": 0, "distance": 1 }
+        }
+      ]
+    },
+    "ball_friendship": {
+      "text": "Ece, Mert'e top oynamayı önerdi. Mert önce biraz duraksadı. 'Ben çok iyi oynayamam,' dedi. Ece gülümsedi. 'Önemli değil, birlikte deneriz,' diye cevap verdi.\n\nİlk başta top bazen yanlarından kaçtı, bazen de istedikleri yere gitmedi. Ama Ece her seferinde gülerek tekrar denedi. Mert de zamanla rahatladı. Bir süre sonra ikisi de topun peşinden koşarken kahkahalar atıyordu.",
+      "choicePrompt": "Mert artık biraz daha mutlu görünüyordu. Sence birlikte devam et mi, yoksa ayrı oyna mı?",
+      "question": "Sonra ne yapsınlar?",
+      "choices": [
+        {
+          "title": "Birlikte devam et",
+          "image": "assets/story/play_together.png",
+          "next": "explore_together",
+          "scores": { "empathy": 0, "friendship": 2, "distance": 0 }
+        },
+        {
+          "title": "Ayrı oyna",
+          "image": "assets/story/play_slide.png",
+          "next": "distance_path",
+          "scores": { "empathy": 0, "friendship": 0, "distance": 2 }
+        }
+      ]
+    },
+    "explore_together": {
+      "text": "Ece ve Mert artık daha rahat konuşuyordu. Parkın çiçekli yolundan birlikte yürüdüler, salıncakların yanından geçtiler ve daha önce fark etmedikleri küçük bir oyun alanı buldular. Ece, Mert'in artık daha sık gülümsediğini gördü.\n\nTam o sırada yakınlardan bir ağlama sesi geldi. Küçük bir çocuk yere oturmuş, dizini tutuyordu. Etrafına bakıyor ama ne yapacağını bilemiyor gibiydi. Ece ve Mert bir an durup birbirlerine baktılar.",
+      "choicePrompt": "Küçük çocuk üzgün görünüyordu. Sence yardım edelim mi, yoksa izleyelim mi?",
+      "question": "Ne yapsınlar?",
+      "choices": [
+        {
+          "title": "Yardım edelim",
+          "image": "assets/story/help_child.png",
+          "next": "good_end",
+          "scores": { "empathy": 3, "friendship": 1, "distance": 0 }
+        },
+        {
+          "title": "İzleyelim",
+          "image": "assets/story/watch_child.png",
+          "next": "middle_end",
+          "scores": { "empathy": 0, "friendship": 0, "distance": 2 }
+        }
+      ]
+    },
+    "quiet_path": {
+      "text": "Ece ve Mert, Pamuk'un yanında sessizce oturdular. Pamuk'un yumuşacık tüyleri ikisine de huzur verdi. Mert artık ilk geldiği kadar üzgün değildi, ama parkın diğer tarafındaki oyunlara katılmak için de çok cesaret bulamamıştı.\n\nGün sakin geçti. Ece, Mert'e küçük bir gülümseme verdi. Mert de ona el salladı. Belki bu dostluk bugün çok hızlı başlamamıştı, ama küçük ve nazik bir adım atılmıştı.",
+      "end": "middle"
+    },
+    "distance_path": {
+      "text": "Ece oynamaya devam etti. Kaydıraktan kaydı, salıncağa bindi ve parkta eğlendi. Ama günün sonunda Mert'in hâlâ yalnız olduğunu fark etti. Mert sessizce annesinin yanına yürürken Ece'nin içinde küçük bir pişmanlık oluştu.\n\nEve dönerken Ece düşündü: 'Belki de bir dahaki sefere yalnız duran birini görünce önce merhaba demeliyim.' O gün eğlenceliydi ama kaçan küçük bir dostluk fırsatı da vardı.",
+      "end": "bad"
+    },
+    "good_end": {
+      "text": "Ece hemen annesini çağırdı. Mert de küçük çocuğun yanında kalarak ona sakin bir sesle, 'Geçecek, merak etme,' dedi. Ece'nin annesi çocuğun dizine baktı ve ona yardım etti. Küçük çocuk biraz sonra ağlamayı bıraktı.\n\nO gün Ece ve Mert sadece birlikte oyun oynamadılar; aynı zamanda birine yardım etmenin kalbi nasıl ısıttığını da öğrendiler. Parktan ayrılırken Mert artık yalnız hissetmiyordu. Ece de yeni bir dostluk kurmanın sevincini taşıyordu.",
+      "end": "good"
+    },
+    "middle_end": {
+      "text": "Ece ve Mert küçük çocuğu uzaktan izlediler. Bir süre sonra başka bir yetişkin gelip ona yardım etti. Çocuk sakinleşti, ama Ece'nin aklında küçük bir düşünce kaldı. 'Biz de yardım edebilirdik,' diye geçirdi içinden.\n\nYine de o gün Ece ve Mert birbirini tanımış, birlikte güzel vakit geçirmişti. Dostlukları yavaşça başlamıştı. Ece, bir sonraki sefere biri yardıma ihtiyaç duyarsa daha cesur davranmaya karar verdi.",
+      "end": "middle"
+    }
+  }
+}
