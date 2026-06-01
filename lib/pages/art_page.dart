@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:kiddoai/pages/paint_page.dart';
 import 'package:kiddoai/pages/draw_page.dart';
 
-
 class ArtPage extends StatelessWidget {
   const ArtPage({super.key});
 
@@ -28,6 +27,7 @@ class ArtPage extends StatelessWidget {
         child: Column(
           children: [
             const SizedBox(height: 20),
+
             const Text(
               "Ne yapmak istersin?",
               textAlign: TextAlign.center,
@@ -37,15 +37,16 @@ class ArtPage extends StatelessWidget {
                 color: Color(0xFF7C5A00),
               ),
             ),
+
             const SizedBox(height: 30),
+
             Expanded(
               child: Column(
                 children: [
                   Expanded(
                     child: _ArtOptionCard(
                       title: "Boyama",
-                      icon: Icons.palette_rounded,
-                      color: const Color(0xFFFFCC80),
+                      imagePath: "assets/paint/boyama.jpg",
                       onTap: () {
                         Navigator.push(
                           context,
@@ -56,12 +57,13 @@ class ArtPage extends StatelessWidget {
                       },
                     ),
                   ),
+
                   const SizedBox(height: 20),
+
                   Expanded(
                     child: _ArtOptionCard(
                       title: "Çizim",
-                      icon: Icons.brush_rounded,
-                      color: const Color(0xFFB39DDB),
+                      imagePath: "assets/paint/cizim.jpg",
                       onTap: () {
                         Navigator.push(
                           context,
@@ -84,46 +86,66 @@ class ArtPage extends StatelessWidget {
 
 class _ArtOptionCard extends StatelessWidget {
   final String title;
-  final IconData icon;
-  final Color color;
+  final String imagePath;
   final VoidCallback onTap;
 
   const _ArtOptionCard({
     required this.title,
-    required this.icon,
-    required this.color,
+    required this.imagePath,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: color,
       borderRadius: BorderRadius.circular(28),
-      elevation: 4,
+      elevation: 5,
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(28),
         onTap: onTap,
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 70,
-                color: Colors.white,
-              ),
-              const SizedBox(height: 14),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              imagePath,
+              fit: BoxFit.cover,
+            ),
+
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.08),
+                    Colors.black.withOpacity(0.32),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 28),
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    shadows: [
+                      Shadow(
+                        blurRadius: 10,
+                        color: Colors.black45,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

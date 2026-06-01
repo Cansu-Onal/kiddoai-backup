@@ -1,14 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:audioplayers/audioplayers.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
-import '../pages/avatar_animated_widget.dart';
+import '../pages/avatar_view_page.dart';
 import '../services/chat_service.dart';
-import '../services/realtime_service.dart';
 
 class ChatAvatarPage extends StatefulWidget {
   final String nickname;
@@ -34,31 +38,54 @@ class _ChatBubbleMessage {
 
 class _ChatAvatarPageState extends State<ChatAvatarPage>
     with WidgetsBindingObserver {
-  final RealtimeService _rt = RealtimeService();
   final SpeechToText _speech = SpeechToText();
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
-  bool _isConnecting = false;
   bool _isConnected = false;
+  bool _isConnecting = false;
   bool _isTalking = false;
   bool _isListening = false;
   bool _isSending = false;
   bool _speechReady = false;
   bool _firstGreetingSpoken = false;
-  bool _savedThisTurn = false;
+  bool _sendLocked = false;
+  bool _disposed = false;
+  bool _listenStarting = false;
+  bool _isVoiceEnabled = false;
 
   String _status = "Sohbet hazır";
   String _lastWords = "";
+  String _lastSentText = "";
 
   Timer? _silenceTimer;
   Timer? _forceDoneTimer;
+  Timer? _listenRetryTimer;
+  Timer? _girlTalkTimer;
+  Timer? _girlBlinkTimer;
 
   static const String _avatarName = "Arkadaşın";
+
+  String _gender = "Erkek";
+
+  static const String girlNormalAsset = "assets/avatars/normal_kiz.png";
+  static const String girlTalkingAsset = "assets/avatars/konusan_kiz.png";
+  static const String girlBlinkAsset = "assets/avatars/goz_kapali_kiz.png";
+
+  String _currentGirlAsset = girlNormalAsset;
+
+  bool get _isGirl => _gender == "Kız";
+
+  static String get _baseUrl {
+    if (kIsWeb) return "http://localhost:3000";
+    return "http://10.0.2.2:3000";
+  }
 
   List<String> _profileInterests = [];
   List<String> _profileGoals = [];
   String _extraLike = "";
 
   final List<_ChatBubbleMessage> _messages = [];
+  final List<Map<String, String>> _chatHistory = [];
 
   @override
   void initState() {
@@ -68,159 +95,15 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
     _loadAvatarProfile();
     _initSpeech();
 
-    _rt.onStatus = (msg) {
-      if (!mounted) return;
-      setState(() => _status = msg);
-    };
-
-    _rt.onConnected = () async {
-      if (!mounted) return;
-
-      setState(() {
-        _isConnected = true;
-        _isConnecting = false;
-        _isTalking = false;
-        _isListening = false;
-        _isSending = false;
-        _status = "Avatar hazırlanıyor...";
-      });
-
-      await Future.delayed(const Duration(milliseconds: 500));
-      await _speakFirstGreeting();
-    };
-
-    _rt.onDisconnected = () async {
-      if (!mounted) return;
-
-      await _stopListening();
-      _cancelForceDoneTimer();
-
-      setState(() {
-        _isConnected = false;
-        _isConnecting = false;
-        _isTalking = false;
-        _isListening = false;
-        _isSending = false;
-        _status = "Sohbet kapalı";
-      });
-    };
-
-    _rt.onEvent = (e) async {
-      if (!mounted) return;
-
-      final type = e["type"]?.toString();
-
-      if (type == "assistant_error") {
-        await _stopListening();
-        _cancelForceDoneTimer();
-
-        if (!mounted) return;
-        setState(() {
-          _isTalking = false;
-          _isListening = false;
-          _isConnecting = false;
-          _isSending = false;
-          _status = "Avatar şu an konuşamıyor.";
-        });
-
-        await _restartListeningSafely();
-        return;
-      }
-
-      if (type == "assistant_text") {
-        await _stopListening();
-
-        final text =
-            (e["text"] ?? e["message"] ?? e["reply"] ?? "").toString().trim();
-
-        final saveToPanel = e["saveToPanel"];
-        final shouldSave = saveToPanel is bool ? saveToPanel : true;
-
-        if (text.isNotEmpty) {
-          setState(() {
-            _status = "Avatar sesi hazırlanıyor...";
-          });
-
-          final userText = _lastWords.trim();
-
-          if (shouldSave &&
-              !_savedThisTurn &&
-              userText.isNotEmpty &&
-              text.isNotEmpty) {
-            _savedThisTurn = true;
-
-            await _saveChat(
-              childMessage: userText,
-              aiReply: text,
-            );
-          }
-        }
-
-        return;
-      }
-
-      if (type == "assistant_audio_start") {
-        await _stopListening();
-
-        if (!mounted) return;
-
-        setState(() {
-          _isTalking = true;
-          _isListening = false;
-          _isSending = false;
-          _status = "Avatar konuşuyor...";
-        });
-
-        _startForceDoneTimer();
-        return;
-      }
-
-      if (type == "assistant_done") {
-        await _finishAssistantTurn();
-        return;
-      }
-    };
-  }
-
-  Future<void> _finishAssistantTurn() async {
-    _cancelForceDoneTimer();
-
-    if (!mounted) return;
-
-    setState(() {
-      _isTalking = false;
-      _isSending = false;
-      _status = "Seni dinliyor...";
-    });
-
-    await _restartListeningSafely();
-  }
-
-  void _startForceDoneTimer() {
-    _cancelForceDoneTimer();
-
-    _forceDoneTimer = Timer(const Duration(seconds: 18), () async {
-      if (!mounted) return;
+    _audioPlayer.onPlayerComplete.listen((_) async {
+      if (!mounted || _disposed) return;
       if (!_isConnected) return;
-      if (!_isTalking && !_isSending) return;
+      if (!_isTalking) return;
 
       await _finishAssistantTurn();
     });
-  }
 
-  void _cancelForceDoneTimer() {
-    _forceDoneTimer?.cancel();
-    _forceDoneTimer = null;
-  }
-
-  Future<void> _restartListeningSafely() async {
-    await Future.delayed(const Duration(milliseconds: 700));
-
-    if (!mounted) return;
-
-    if (_isConnected && !_isTalking && !_isSending && !_isListening) {
-      await _startListening();
-    }
+    _startGirlBlinkLoop();
   }
 
   Future<void> _loadAvatarProfile() async {
@@ -241,9 +124,11 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
       final interestsRaw = data["interests"];
       final goalsRaw = data["goals"];
 
-      if (!mounted) return;
+      if (!mounted || _disposed) return;
 
       setState(() {
+        _gender = (data["gender"] ?? "Erkek").toString();
+
         _profileInterests = interestsRaw is List
             ? interestsRaw.map((e) => e.toString()).toList()
             : [];
@@ -258,14 +143,74 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
     }
   }
 
+  void _startGirlBlinkLoop() {
+    _girlBlinkTimer?.cancel();
+
+    _girlBlinkTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
+      if (!mounted || _disposed) return;
+      if (!_isGirl) return;
+      if (_isTalking || _isSending) return;
+
+      setState(() {
+        _currentGirlAsset = girlBlinkAsset;
+      });
+
+      await Future.delayed(const Duration(milliseconds: 180));
+
+      if (!mounted || _disposed) return;
+      if (!_isGirl) return;
+      if (_isTalking || _isSending) return;
+
+      setState(() {
+        _currentGirlAsset = girlNormalAsset;
+      });
+    });
+  }
+
+  void _startGirlTalkingLoop() {
+    if (!_isGirl) return;
+
+    _girlTalkTimer?.cancel();
+
+    _girlTalkTimer = Timer.periodic(const Duration(milliseconds: 180), (_) {
+      if (!mounted || _disposed) return;
+      if (!_isGirl) return;
+      if (!_isTalking) return;
+
+      setState(() {
+        _currentGirlAsset = _currentGirlAsset == girlTalkingAsset
+            ? girlNormalAsset
+            : girlTalkingAsset;
+      });
+    });
+  }
+
+  void _stopGirlTalkingLoop() {
+    _girlTalkTimer?.cancel();
+    _girlTalkTimer = null;
+
+    if (!mounted || _disposed) return;
+
+    setState(() {
+      _currentGirlAsset = girlNormalAsset;
+    });
+  }
+
   Future<void> _initSpeech() async {
     try {
       _speechReady = await _speech.initialize(
         onStatus: (status) {
-          if (!mounted) return;
+          if (!mounted || _disposed) return;
+
+          if (!_isVoiceEnabled) {
+            setState(() => _isListening = false);
+            return;
+          }
 
           if (status == "listening") {
-            setState(() => _isListening = true);
+            if (!_isTalking && !_isSending) {
+              setState(() => _isListening = true);
+            }
           }
 
           if (status == "notListening" || status == "done") {
@@ -273,14 +218,19 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
           }
         },
         onError: (error) {
-          if (!mounted) return;
+          if (!mounted || _disposed) return;
 
           debugPrint("Speech error: $error");
 
           setState(() {
             _isListening = false;
+            _listenStarting = false;
             _status = "Mikrofon dinleme hatası";
           });
+
+          if (_isVoiceEnabled && _isConnected && !_isTalking && !_isSending) {
+            _scheduleListenRetry();
+          }
         },
       );
     } catch (e) {
@@ -289,8 +239,55 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
     }
   }
 
+  void _scheduleListenRetry() {
+    if (!_isVoiceEnabled) return;
+
+    _listenRetryTimer?.cancel();
+
+    _listenRetryTimer = Timer(const Duration(milliseconds: 900), () async {
+      if (!mounted || _disposed) return;
+      if (_isVoiceEnabled &&
+          _isConnected &&
+          !_isTalking &&
+          !_isSending &&
+          !_isListening) {
+        await _startListening();
+      }
+    });
+  }
+
   Future<void> _clickSound() async {
     await SystemSound.play(SystemSoundType.click);
+  }
+
+  Future<void> _toggleVoice() async {
+    await _clickSound();
+
+    if (_isVoiceEnabled) {
+      _listenRetryTimer?.cancel();
+      await _stopListening();
+
+      if (!mounted || _disposed) return;
+
+      setState(() {
+        _isVoiceEnabled = false;
+        _isListening = false;
+        _listenStarting = false;
+        _lastWords = "";
+        _status = _isConnected ? "Ses kapalı" : "Sohbet hazır";
+      });
+    } else {
+      if (!mounted || _disposed) return;
+
+      setState(() {
+        _isVoiceEnabled = true;
+        _status = _isConnected ? "Ses açıldı" : "Ses açık";
+      });
+
+      if (_isConnected && !_isTalking && !_isSending) {
+        await _startListening();
+      }
+    }
   }
 
   Future<void> _startChat() async {
@@ -301,38 +298,33 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
 
     setState(() {
       _isConnecting = true;
+      _isConnected = false;
       _isTalking = false;
       _isListening = false;
       _isSending = false;
       _firstGreetingSpoken = false;
-      _savedThisTurn = false;
+      _sendLocked = false;
+      _listenStarting = false;
+      _isVoiceEnabled = false;
       _lastWords = "";
+      _lastSentText = "";
       _messages.clear();
-      _status = "Bağlanıyor...";
+      _chatHistory.clear();
+      _status = "Avatar hazırlanıyor...";
+      _currentGirlAsset = girlNormalAsset;
     });
 
-    try {
-      await _rt.connectAndStartChat(
-        nickname: widget.nickname,
-        personality: widget.personality,
-        avatarName: _avatarName,
-        interests: _profileInterests,
-        goals: _profileGoals,
-      );
-    } catch (e) {
-      debugPrint("Realtime connection error: $e");
+    await Future.delayed(const Duration(milliseconds: 400));
 
-      if (!mounted) return;
+    if (!mounted || _disposed) return;
 
-      setState(() {
-        _isConnecting = false;
-        _isConnected = false;
-        _isTalking = false;
-        _isListening = false;
-        _isSending = false;
-        _status = "Bağlantı hatası";
-      });
-    }
+    setState(() {
+      _isConnecting = false;
+      _isConnected = true;
+      _status = "Avatar konuşmaya başlıyor...";
+    });
+
+    await _speakFirstGreeting();
   }
 
   Future<void> _speakFirstGreeting() async {
@@ -346,21 +338,18 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
         ? "Merhaba ${widget.nickname}. Bugün nasılsın? Bana bugün neler yaptığını anlatır mısın?"
         : "Merhaba ${widget.nickname}. Bugün nasılsın? İstersen birazdan $interestText hakkında sohbet edebiliriz.";
 
+    _addHistory("assistant", greeting);
+
     setState(() {
       _firstGreetingSpoken = true;
       _isSending = true;
-      _savedThisTurn = true;
+      _isTalking = false;
+      _isListening = false;
       _lastWords = "";
-      _status = "Avatar konuşmaya başlıyor...";
+      _status = "Avatar sesi hazırlanıyor...";
     });
 
-    await _rt.speakAvatarText(
-      text: greeting,
-      nickname: widget.nickname,
-      personality: widget.personality,
-      avatarName: _avatarName,
-      saveToPanel: false,
-    );
+    await _playTts(greeting);
   }
 
   String _getMainInterest() {
@@ -376,100 +365,378 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
     return cleanInterests.first;
   }
 
-  Future<void> _startListening() async {
-    if (!_isConnected || _isTalking || _isListening || _isSending) return;
+  void _addHistory(String role, String text) {
+    final clean = text.trim();
+    if (clean.isEmpty) return;
 
-    if (!_speechReady) {
-      await _initSpeech();
+    _chatHistory.add({
+      "role": role,
+      "text": clean,
+    });
+
+    if (_chatHistory.length > 10) {
+      _chatHistory.removeRange(0, _chatHistory.length - 10);
+    }
+  }
+
+  List<Map<String, String>> _historyForServer() {
+    return _chatHistory
+        .map((item) => {
+              "role": item["role"] ?? "",
+              "text": item["text"] ?? "",
+            })
+        .where((item) => item["role"]!.isNotEmpty && item["text"]!.isNotEmpty)
+        .toList();
+  }
+
+  Future<String> _getBotReply(String userText) async {
+    final interests = <String>[
+      ..._profileInterests,
+      if (_extraLike.trim().isNotEmpty) _extraLike.trim(),
+    ];
+
+    final response = await http
+        .post(
+          Uri.parse("$_baseUrl/chat"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "message": userText,
+            "history": _historyForServer(),
+            "interests": interests,
+            "goals": _profileGoals,
+            "nickname": widget.nickname,
+            "personality": widget.personality,
+          }),
+        )
+        .timeout(const Duration(seconds: 90));
+
+    if (response.statusCode != 200) {
+      throw Exception("Chat API hata: ${response.statusCode}");
     }
 
-    if (!_speechReady) {
-      if (!mounted) return;
-      setState(() => _status = "Mikrofon başlatılamadı");
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+    return (data["text"] ?? data["reply"] ?? "").toString().trim();
+  }
+
+  Future<Uint8List> _getTtsBytes(String text) async {
+    final response = await http
+        .post(
+          Uri.parse("$_baseUrl/tts"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "text": text,
+            "gender": _gender,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode != 200) {
+      throw Exception("TTS API hata: ${response.statusCode}");
+    }
+
+    return response.bodyBytes;
+  }
+
+  Future<void> _playTts(String text) async {
+    final cleanText = text.trim();
+
+    if (cleanText.isEmpty) {
+      await _finishAssistantTurn();
       return;
     }
 
-    _lastWords = "";
+    try {
+      await _stopListening();
+
+      if (!mounted || _disposed) return;
+
+      setState(() {
+        _isSending = true;
+        _isTalking = false;
+        _isListening = false;
+        _lastWords = "";
+        _status = "Avatar sesi hazırlanıyor...";
+      });
+
+      final audioBytes = await _getTtsBytes(cleanText);
+
+      if (!mounted || _disposed) return;
+
+      setState(() {
+        _isSending = false;
+        _isTalking = true;
+        _isListening = false;
+        _lastWords = "";
+        _status = "Avatar konuşuyor...";
+      });
+
+      if (_isGirl) {
+        _startGirlTalkingLoop();
+      }
+
+      _startForceDoneTimer();
+
+      await _audioPlayer.stop();
+      await _audioPlayer.play(BytesSource(audioBytes));
+    } catch (e) {
+      debugPrint("TTS play error: $e");
+
+      if (!mounted || _disposed) return;
+
+      _cancelForceDoneTimer();
+      _stopGirlTalkingLoop();
+
+      setState(() {
+        _isSending = false;
+        _isTalking = false;
+        _isListening = false;
+        _lastWords = "";
+        _status = "Ses hazırlanamadı, tekrar deneyebilirsin.";
+      });
+
+      await _restartListeningSafely();
+    }
+  }
+
+  Future<void> _finishAssistantTurn() async {
+    _cancelForceDoneTimer();
+    _stopGirlTalkingLoop();
+
+    if (!mounted || _disposed) return;
 
     setState(() {
-      _isListening = true;
-      _status = "Seni dinliyor...";
+      _isTalking = false;
+      _isSending = false;
+      _isListening = false;
+      _lastWords = "";
+      _status = _isVoiceEnabled ? "Seni dinliyor..." : "Ses kapalı";
     });
 
+    await _restartListeningSafely();
+  }
+
+  void _startForceDoneTimer() {
+    _cancelForceDoneTimer();
+
+    _forceDoneTimer = Timer(const Duration(seconds: 30), () async {
+      if (!mounted || _disposed) return;
+      if (!_isConnected) return;
+      if (!_isTalking && !_isSending) return;
+
+      await _audioPlayer.stop();
+      await _finishAssistantTurn();
+    });
+  }
+
+  void _cancelForceDoneTimer() {
+    _forceDoneTimer?.cancel();
+    _forceDoneTimer = null;
+  }
+
+  Future<void> _restartListeningSafely() async {
+    await Future.delayed(const Duration(milliseconds: 900));
+
+    if (!mounted || _disposed) return;
+    if (!_isVoiceEnabled) return;
+
+    if (_isConnected &&
+        !_isTalking &&
+        !_isSending &&
+        !_isListening &&
+        !_listenStarting &&
+        !_speech.isListening) {
+      await _startListening();
+    }
+  }
+
+  Future<void> _startListening() async {
+    if (!_isVoiceEnabled) return;
+    if (!_isConnected || _isTalking || _isSending || _sendLocked) return;
+    if (_isListening || _listenStarting || _speech.isListening) return;
+
+    _listenStarting = true;
+
     try {
+      if (!_speechReady) {
+        await _initSpeech();
+      }
+
+      if (!_speechReady) {
+        if (!mounted || _disposed) return;
+        setState(() => _status = "Mikrofon başlatılamadı");
+        return;
+      }
+
+      _lastWords = "";
+
+      if (!mounted || _disposed) return;
+
+      setState(() {
+        _isListening = true;
+        _status = "Seni dinliyor...";
+      });
+
       await _speech.listen(
         listenFor: const Duration(minutes: 5),
         pauseFor: const Duration(seconds: 5),
         partialResults: true,
         localeId: "tr_TR",
+        cancelOnError: false,
         onResult: (result) {
+          if (!mounted || _disposed) return;
+          if (!_isVoiceEnabled) return;
+          if (!_isConnected) return;
+          if (_isTalking || _isSending || _sendLocked) return;
+
           final text = result.recognizedWords.trim();
+          if (text.isEmpty) return;
 
-          if (!mounted) return;
-          if (_isTalking || _isSending) return;
+          setState(() {
+            _lastWords = text;
+          });
 
-          if (text.isNotEmpty) {
-            setState(() {
-              _lastWords = text;
-            });
-
-            _silenceTimer?.cancel();
-            _silenceTimer = Timer(const Duration(seconds: 2), () async {
-              await _finishListeningAndSend();
-            });
-          }
+          _silenceTimer?.cancel();
+          _silenceTimer = Timer(const Duration(seconds: 2), () async {
+            await _finishListeningAndSend();
+          });
         },
       );
     } catch (e) {
       debugPrint("Speech listen error: $e");
 
-      if (!mounted) return;
+      if (!mounted || _disposed) return;
 
       setState(() {
         _isListening = false;
         _status = "Mikrofon dinleme hatası";
       });
+
+      _scheduleListenRetry();
+    } finally {
+      _listenStarting = false;
     }
   }
 
   Future<void> _finishListeningAndSend() async {
+    if (!_isVoiceEnabled) return;
+    if (_sendLocked) return;
     if (_isSending || _isTalking) return;
 
-    final text = _lastWords.trim();
+    final userText = _lastWords.trim();
 
     await _stopListening();
 
-    if (text.isEmpty) {
+    if (userText.isEmpty) {
       await _restartListeningSafely();
       return;
     }
 
-    if (!mounted) return;
+    final normalizedCurrent = userText.toLowerCase().trim();
+    final normalizedLast = _lastSentText.toLowerCase().trim();
+
+    if (normalizedCurrent == normalizedLast) {
+      await _restartListeningSafely();
+      return;
+    }
+
+    _sendLocked = true;
+    _lastSentText = userText;
+    _addHistory("child", userText);
+
+    if (!mounted || _disposed) {
+      _sendLocked = false;
+      return;
+    }
 
     setState(() {
       _status = "Avatar düşünüyor...";
       _isSending = true;
-      _savedThisTurn = false;
-      _addUserMessage(text);
+      _isTalking = false;
+      _isListening = false;
+      _lastWords = "";
+      _addUserMessage(userText);
     });
 
     try {
-      await _rt.sendText(text).timeout(const Duration(seconds: 45));
-    } catch (e) {
-      debugPrint("Send text error: $e");
+      final botText = await _getBotReply(userText);
 
-      if (!mounted) return;
+      if (!mounted || _disposed) {
+        _sendLocked = false;
+        return;
+      }
+
+      if (botText.isEmpty) {
+        throw Exception("Boş cevap geldi");
+      }
+
+      _addHistory("assistant", botText);
+
+      try {
+        await _saveChat(
+          childMessage: userText,
+          aiReply: botText,
+        );
+      } catch (e) {
+        debugPrint("Firebase kayıt hatası ama sohbet devam ediyor: $e");
+      }
+
+      await _playTts(botText);
+    } on TimeoutException catch (e) {
+      debugPrint("Timeout error: $e");
+
+      if (!mounted || _disposed) {
+        _sendLocked = false;
+        return;
+      }
 
       _cancelForceDoneTimer();
+      _stopGirlTalkingLoop();
 
       setState(() {
         _isTalking = false;
         _isListening = false;
         _isSending = false;
-        _status = "Cevap gecikti. Tekrar deneyebilirsin.";
+        _lastWords = "";
+        _status = "İstek uzun sürdü, tekrar deneyebilirsin.";
       });
 
       await _restartListeningSafely();
+    } catch (e) {
+      debugPrint("Send text error: $e");
+
+      if (!mounted || _disposed) {
+        _sendLocked = false;
+        return;
+      }
+
+      _cancelForceDoneTimer();
+      _stopGirlTalkingLoop();
+
+      final err = e.toString();
+
+      setState(() {
+        _isTalking = false;
+        _isListening = false;
+        _isSending = false;
+        _lastWords = "";
+
+        if (err.contains("Chat API hata")) {
+          _status = "Sunucu cevap veremedi, tekrar deneyebilirsin.";
+        } else if (err.contains("TTS API hata")) {
+          _status = "Ses hazırlanamadı, tekrar deneyebilirsin.";
+        } else if (err.contains("SocketException") ||
+            err.contains("ClientException") ||
+            err.contains("XMLHttpRequest")) {
+          _status = "Bağlantı sorunu var, tekrar deneyebilirsin.";
+        } else {
+          _status = "Bir sorun oldu, tekrar deneyebilirsin.";
+        }
+      });
+
+      await _restartListeningSafely();
+    } finally {
+      await Future.delayed(const Duration(milliseconds: 500));
+      _sendLocked = false;
     }
   }
 
@@ -490,10 +757,12 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
     _silenceTimer = null;
 
     try {
-      await _speech.stop();
+      if (_speech.isListening) {
+        await _speech.stop();
+      }
     } catch (_) {}
 
-    if (!mounted) return;
+    if (!mounted || _disposed) return;
 
     setState(() {
       _isListening = false;
@@ -502,9 +771,32 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
 
   Future<void> _stopChat() async {
     await _clickSound();
+
     _cancelForceDoneTimer();
+    _listenRetryTimer?.cancel();
+    _stopGirlTalkingLoop();
+
     await _stopListening();
-    await _rt.disconnect();
+    await _audioPlayer.stop();
+
+    if (!mounted || _disposed) return;
+
+    setState(() {
+      _isConnected = false;
+      _isConnecting = false;
+      _isTalking = false;
+      _isListening = false;
+      _isSending = false;
+      _isVoiceEnabled = false;
+      _sendLocked = false;
+      _listenStarting = false;
+      _lastWords = "";
+      _lastSentText = "";
+      _messages.clear();
+      _chatHistory.clear();
+      _status = "Sohbet kapalı";
+      _currentGirlAsset = girlNormalAsset;
+    });
   }
 
   Future<void> _saveChat({
@@ -524,40 +816,71 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
-    if (!mounted) return;
+    if (!mounted || _disposed) return;
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       _cancelForceDoneTimer();
+      _listenRetryTimer?.cancel();
+      _stopGirlTalkingLoop();
+
       await _stopListening();
+      await _audioPlayer.stop();
+
+      if (!mounted || _disposed) return;
+
+      setState(() {
+        _isTalking = false;
+        _isSending = false;
+        _isListening = false;
+        _listenStarting = false;
+        _lastWords = "";
+      });
     }
 
     if (state == AppLifecycleState.resumed &&
+        _isVoiceEnabled &&
         _isConnected &&
         !_isTalking &&
         !_isListening &&
         !_isSending) {
-      await _startListening();
+      await _restartListeningSafely();
     }
   }
 
   @override
   void dispose() {
+    _disposed = true;
+
     WidgetsBinding.instance.removeObserver(this);
 
     _silenceTimer?.cancel();
     _forceDoneTimer?.cancel();
+    _listenRetryTimer?.cancel();
+    _girlTalkTimer?.cancel();
+    _girlBlinkTimer?.cancel();
 
-    _rt.onStatus = null;
-    _rt.onConnected = null;
-    _rt.onDisconnected = null;
-    _rt.onEvent = null;
+    try {
+      _speech.stop();
+    } catch (_) {}
 
-    _speech.stop();
-    _rt.dispose();
+    try {
+      _audioPlayer.stop();
+      _audioPlayer.dispose();
+    } catch (_) {}
 
     super.dispose();
   }
+
+Widget _buildAvatar() {
+  return AvatarView(
+    isTalking: _isTalking,
+    isListening: _isListening,
+    isVoiceEnabled: _isVoiceEnabled,
+    gender: _gender,
+    onVoiceToggle: _isConnected ? _toggleVoice : null,
+  );
+}
 
   Widget _buildChatBubble(_ChatBubbleMessage message) {
     return Align(
@@ -599,13 +922,15 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
   Widget build(BuildContext context) {
     final String infoText = !_isConnected
         ? "Başlatınca avatar önce sana soru soracak."
-        : _isTalking
-            ? "Avatar konuşuyor..."
-            : _isListening
-                ? "Seni dinliyor..."
-                : _isSending
-                    ? "Avatar düşünüyor..."
-                    : "Sohbet açık.";
+        : !_isVoiceEnabled
+            ? "Ses kapalı. Konuşacağın zaman Sesi Aç."
+            : _isTalking
+                ? "Avatar konuşuyor..."
+                : _isListening
+                    ? "Seni dinliyor..."
+                    : _isSending
+                        ? "Avatar düşünüyor..."
+                        : "Ses açık. Konuşabilirsin.";
 
     return Scaffold(
       appBar: AppBar(
@@ -620,10 +945,7 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                AnimatedAvatar(
-                  isTalking: _isTalking,
-                  width: 280,
-                ),
+                _buildAvatar(),
                 const SizedBox(height: 18),
                 Text(
                   _avatarName,
@@ -667,7 +989,7 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
                         ),
                 ),
                 const SizedBox(height: 16),
-                if (_lastWords.isNotEmpty)
+                if (_lastWords.isNotEmpty && !_isTalking && !_isSending)
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
@@ -704,6 +1026,17 @@ class _ChatAvatarPageState extends State<ChatAvatarPage>
                           (_isConnecting || _isConnected) ? null : _startChat,
                       child: Text(
                         _isConnecting ? "Bağlanıyor..." : "Avatarı Başlat",
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _isConnected ? _toggleVoice : null,
+                      icon: Icon(
+                        _isVoiceEnabled
+                            ? Icons.mic_off_rounded
+                            : Icons.mic_rounded,
+                      ),
+                      label: Text(
+                        _isVoiceEnabled ? "Sesi Kapat" : "Sesi Aç",
                       ),
                     ),
                     OutlinedButton(

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -7,6 +8,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
+
+import 'parent_saved_paintings_store.dart';
 
 class PaintItem {
   final String title;
@@ -20,49 +23,6 @@ class PaintItem {
   });
 }
 
-class ParentSavedPainting {
-  final String id;
-  final String title;
-  final Uint8List imageBytes;
-  final DateTime savedAt;
-
-  const ParentSavedPainting({
-    required this.id,
-    required this.title,
-    required this.imageBytes,
-    required this.savedAt,
-  });
-}
-
-class ParentSavedPaintingsStore {
-  static final ValueNotifier<List<ParentSavedPainting>> paintings =
-      ValueNotifier<List<ParentSavedPainting>>([]);
-
-  static void upsert({
-    required String id,
-    required String title,
-    required Uint8List imageBytes,
-  }) {
-    final current = List<ParentSavedPainting>.from(paintings.value);
-    final index = current.indexWhere((e) => e.id == id);
-
-    final item = ParentSavedPainting(
-      id: id,
-      title: title,
-      imageBytes: imageBytes,
-      savedAt: DateTime.now(),
-    );
-
-    if (index >= 0) {
-      current[index] = item;
-    } else {
-      current.insert(0, item);
-    }
-
-    paintings.value = current;
-  }
-}
-
 class PaintPage extends StatefulWidget {
   const PaintPage({super.key});
 
@@ -73,31 +33,59 @@ class PaintPage extends StatefulWidget {
 class _PaintPageState extends State<PaintPage> {
   final List<PaintItem> _paintItems = const [
     PaintItem(
-      title: 'Resim 1',
-      previewPath: 'assets/paint/resim1.png',
-      paintPath: 'assets/paint/resim1.png',
+      title: '1',
+      previewPath: 'assets/paint/resim1.jpg',
+      paintPath: 'assets/paint/resim1.jpg',
     ),
     PaintItem(
-      title: 'Resim 2',
-      previewPath: 'assets/paint/resim2.png',
-      paintPath: 'assets/paint/resim2.png',
+      title: '2',
+      previewPath: 'assets/paint/resim2.jpg',
+      paintPath: 'assets/paint/resim2.jpg',
     ),
     PaintItem(
-      title: 'Resim 3',
-      previewPath: 'assets/paint/resim3.png',
-      paintPath: 'assets/paint/resim3.png',
+      title: '3',
+      previewPath: 'assets/paint/resim3.jpg',
+      paintPath: 'assets/paint/resim3.jpg',
     ),
     PaintItem(
-      title: 'Resim 4',
-      previewPath: 'assets/paint/resim4.png',
-      paintPath: 'assets/paint/resim4.png',
+      title: '4',
+      previewPath: 'assets/paint/resim4.jpg',
+      paintPath: 'assets/paint/resim4.jpg',
     ),
     PaintItem(
-      title: 'Resim 5',
-      previewPath: 'assets/paint/resim5.png',
-      paintPath: 'assets/paint/resim5.png',
+      title: '5',
+      previewPath: 'assets/paint/resim5.jpg',
+      paintPath: 'assets/paint/resim5.jpg',
+    ),
+    PaintItem(
+      title: '6',
+      previewPath: 'assets/paint/resim6.jpg',
+      paintPath: 'assets/paint/resim6.jpg',
+    ),
+    PaintItem(
+      title: '7',
+      previewPath: 'assets/paint/resim7.jpg',
+      paintPath: 'assets/paint/resim7.jpg',
+    ),
+    PaintItem(
+      title: '8',
+      previewPath: 'assets/paint/resim8.jpg',
+      paintPath: 'assets/paint/resim8.jpg',
+    ),
+      
+    PaintItem(
+      title: '9',
+      previewPath: 'assets/paint/resim9.jpg',
+      paintPath: 'assets/paint/resim9.jpg',
+    ),
+      
+    PaintItem(
+      title: '10',
+      previewPath: 'assets/paint/resim10.jpg',
+      paintPath: 'assets/paint/resim10.jpg',
     ),
   ];
+  
 
   final Map<String, Uint8List> _savedPaintingPngByPath = {};
 
@@ -156,6 +144,21 @@ class _PaintPageState extends State<PaintPage> {
   bool _refreshScheduled = false;
 
   bool get _hasSelectedRegion => _selectedRegionMask != null;
+
+  @override
+  void initState() {
+    super.initState();
+    ParentSavedPaintingsStore.startAutoCleanup();
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 
   Offset _getLocalPosition(Offset globalPosition) {
     final RenderBox box =
@@ -357,6 +360,7 @@ class _PaintPageState extends State<PaintPage> {
     await _persistCurrentPainting();
 
     if (!mounted) return;
+
     setState(() {
       _selectedItem = null;
       _isPaintingMode = false;
@@ -398,24 +402,34 @@ class _PaintPageState extends State<PaintPage> {
       _isLoadingBitmap = true;
     });
 
-    final originalData = await rootBundle.load(item.paintPath);
-    final originalBytes = originalData.buffer.asUint8List();
-    final originalDecoded = await _decodeImageBytes(originalBytes);
+    try {
+      final originalData = await rootBundle.load(item.paintPath);
+      final originalBytes = originalData.buffer.asUint8List();
+      final originalDecoded = await _decodeImageBytes(originalBytes);
 
-    final savedPng = _savedPaintingPngByPath[item.paintPath];
-    final workingSourceBytes = savedPng ?? originalBytes;
-    final workingDecoded = await _decodeImageBytes(workingSourceBytes);
+      final savedPng = _savedPaintingPngByPath[item.paintPath];
+      final workingSourceBytes = savedPng ?? originalBytes;
+      final workingDecoded = await _decodeImageBytes(workingSourceBytes);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    setState(() {
-      _originalRgbaBytes = originalDecoded.rgbaBytes;
-      _workingRgbaBytes = Uint8List.fromList(workingDecoded.rgbaBytes);
-      _imageWidth = workingDecoded.width;
-      _imageHeight = workingDecoded.height;
-      _displayUiImage = workingDecoded.image;
-      _isLoadingBitmap = false;
-    });
+      setState(() {
+        _originalRgbaBytes = originalDecoded.rgbaBytes;
+        _workingRgbaBytes = Uint8List.fromList(workingDecoded.rgbaBytes);
+        _imageWidth = workingDecoded.width;
+        _imageHeight = workingDecoded.height;
+        _displayUiImage = workingDecoded.image;
+        _isLoadingBitmap = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoadingBitmap = false;
+      });
+
+      _showMessage("Resim yüklenemedi: $e");
+    }
   }
 
   Rect _calculateImageRect(Size canvasSize) {
@@ -487,9 +501,6 @@ class _PaintPageState extends State<PaintPage> {
     return r < 55 && g < 55 && b < 55;
   }
 
-  
-  
-
   void _writeWorking(int x, int y, _Rgba color) {
     final bytes = _workingRgbaBytes!;
     final i = _pixelIndex(x, y);
@@ -510,6 +521,7 @@ class _PaintPageState extends State<PaintPage> {
         startY >= _imageHeight) {
       return;
     }
+
     if (_isBarrierFromOriginal(startX, startY)) return;
 
     final mask = Uint8List(_imageWidth * _imageHeight);
@@ -529,6 +541,7 @@ class _PaintPageState extends State<PaintPage> {
 
       final mi = maskIndex(x, y);
       if (visited[mi] == 1) continue;
+
       visited[mi] = 1;
 
       if (_isBarrierFromOriginal(x, y)) continue;
@@ -542,6 +555,7 @@ class _PaintPageState extends State<PaintPage> {
     }
 
     if (!mounted) return;
+
     setState(() {
       _selectedRegionMask = mask;
     });
@@ -730,6 +744,7 @@ class _PaintPageState extends State<PaintPage> {
     );
 
     if (!mounted) return;
+
     setState(() {
       _displayUiImage = image;
     });
@@ -788,20 +803,27 @@ class _PaintPageState extends State<PaintPage> {
       await _persistCurrentPainting();
 
       final pngBytes = await _encodeCurrentPaintingToPngBytes();
-      if (pngBytes == null) return;
+      if (pngBytes == null) {
+        _showMessage("Resim kaydedilemedi.");
+        return;
+      }
 
-      ParentSavedPaintingsStore.upsert(
-        id: _selectedItem!.paintPath,
-        title: _selectedItem!.title,
-        imageBytes: pngBytes,
+      final now = DateTime.now();
+
+      final dateText =
+          "${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year} "
+          "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
+
+      final imageBase64 = base64Encode(pngBytes);
+
+      await ParentSavedPaintingsStore.save(
+        imageBase64: imageBase64,
+        title: "${_selectedItem!.title} - $dateText",
       );
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Resim ebeveyn paneli için kaydedildi 📸'),
-        ),
-      );
+      _showMessage("Resim ebeveyn paneline kaydedildi 📸 $dateText");
+    } catch (e) {
+      _showMessage("Resim kaydedilemedi: $e");
     } finally {
       if (mounted) {
         setState(() {
@@ -809,6 +831,12 @@ class _PaintPageState extends State<PaintPage> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    ParentSavedPaintingsStore.stopAutoCleanup();
+    super.dispose();
   }
 
   @override
@@ -1297,7 +1325,7 @@ class _InfoBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white.withOpacity(0.92),
+      color: Colors.white.withValues(alpha: 0.92),
       borderRadius: BorderRadius.circular(16),
       elevation: 2,
       child: Padding(

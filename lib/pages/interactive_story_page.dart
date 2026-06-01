@@ -1,23 +1,42 @@
 import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:audioplayers/audioplayers.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:kiddoai/services/elevenlabs_voice_service.dart';
+import 'package:http/http.dart' as http;
 
 class InteractiveStoryPage extends StatefulWidget {
-  const InteractiveStoryPage({super.key});
+  final String nickname;
+  final String personality;
+  final String avatarName;
+
+  const InteractiveStoryPage({
+    super.key,
+    this.nickname = "",
+    this.personality = "",
+    this.avatarName = "",
+  });
 
   @override
   State<InteractiveStoryPage> createState() => _InteractiveStoryPageState();
 }
 
 class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
-  final ElevenLabsVoiceService _voice = ElevenLabsVoiceService();
+  final AudioPlayer _player = AudioPlayer();
 
   bool _isLoading = true;
   bool _isSpeaking = false;
+  bool _choicesEnabled = false;
+  bool _parentResultSent = false;
+
   String? _error;
+  String _gender = "Erkek";
 
   late InteractiveStory _story;
   late String _currentNodeId;
@@ -25,11 +44,58 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
   int empathyScore = 0;
   int friendshipScore = 0;
   int distanceScore = 0;
+  int totalChoices = 0;
+
+  static String get _baseUrl {
+    if (kIsWeb) return "http://localhost:3000";
+    return "http://10.0.2.2:3000";
+  }
+
+  String get _safeNickname {
+    final value = widget.nickname.trim();
+    return value.isEmpty ? "Çocuk" : value;
+  }
+
+  String get _safeAvatarName {
+    final value = widget.avatarName.trim();
+    return value.isEmpty ? "Avatar" : value;
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadStory();
+    _loadAvatarProfileThenStory();
+  }
+
+  Future<void> _loadAvatarProfileThenStory() async {
+    await _loadAvatarProfile();
+    await _loadStory();
+  }
+
+  Future<void> _loadAvatarProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection("users")
+          .doc(user.uid)
+          .collection("settings")
+          .doc("avatarProfile")
+          .get();
+
+      if (!doc.exists) return;
+
+      final data = doc.data() ?? {};
+
+      if (!mounted) return;
+
+      setState(() {
+        _gender = (data["gender"] ?? "Erkek").toString();
+      });
+    } catch (e) {
+      debugPrint("Masal avatar gender okunamadı: $e");
+    }
   }
 
   Future<void> _loadStory() async {
@@ -45,6 +111,8 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
       setState(() {
         _isLoading = false;
         _error = null;
+        _choicesEnabled = false;
+        _parentResultSent = false;
       });
 
       await Future.delayed(const Duration(milliseconds: 500));
@@ -52,6 +120,7 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
       if (!mounted) return;
       await _speakCurrentNode();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _error = "Masal yüklenemedi: $e";
@@ -63,6 +132,38 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
 
   Future<void> _clickSound() async {
     await SystemSound.play(SystemSoundType.click);
+  }
+
+  Future<Uint8List> _getTtsBytes(String text) async {
+    final response = await http
+        .post(
+          Uri.parse("$_baseUrl/tts"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "text": text,
+            "gender": _gender,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode != 200) {
+      throw Exception("TTS API hata: ${response.statusCode}");
+    }
+
+    return response.bodyBytes;
+  }
+
+  Future<void> _speakText(String text) async {
+    final cleanText = text.trim();
+    if (cleanText.isEmpty) return;
+
+    final bytes = await _getTtsBytes(cleanText);
+
+    if (!mounted || !_isSpeaking) return;
+
+    await _player.stop();
+    await _player.play(BytesSource(bytes));
+    await _player.onPlayerComplete.first;
   }
 
   List<String> _splitTextIntoChunks(String text) {
@@ -94,8 +195,8 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
     final chunks = _splitTextIntoChunks(text);
 
     for (final chunk in chunks) {
-      if (!mounted) return;
-      await _voice.speak(chunk);
+      if (!mounted || !_isSpeaking) return;
+      await _speakText(chunk);
       await Future.delayed(const Duration(milliseconds: 300));
     }
   }
@@ -107,57 +208,76 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
 
     setState(() {
       _isSpeaking = true;
+      _choicesEnabled = false;
     });
 
-    await _voice.stop();
+    await _player.stop();
 
-    // Masal metni tamamen bitmeden seçim kısmına geçmez.
-    await _speakLongText(node.text);
+    try {
+      await _speakLongText(node.text);
 
-    if (!mounted) return;
+      if (!mounted || !_isSpeaking) return;
 
-    if (node.choices.length >= 2) {
-      await Future.delayed(const Duration(milliseconds: 900));
+      if (node.choices.length >= 2) {
+        await Future.delayed(const Duration(milliseconds: 900));
 
-      if (!mounted) return;
+        if (!mounted || !_isSpeaking) return;
 
-      final prompt = node.choicePrompt?.trim();
+        final prompt = node.choicePrompt?.trim();
 
-      if (prompt != null && prompt.isNotEmpty) {
-        await _voice.speak("Ece biraz durdu ve düşündü.");
-        await Future.delayed(const Duration(milliseconds: 500));
-        await _voice.speak(prompt);
-      } else {
-        final first = node.choices[0].title;
-        final second = node.choices[1].title;
+        if (prompt != null && prompt.isNotEmpty) {
+          await _speakText("Ece biraz durdu ve düşündü.");
+          await Future.delayed(const Duration(milliseconds: 500));
+          await _speakText(prompt);
+        } else {
+          final first = node.choices[0].title;
+          final second = node.choices[1].title;
 
-        await _voice.speak("Ece biraz durdu ve düşündü.");
-        await Future.delayed(const Duration(milliseconds: 500));
-        await _voice.speak("Sence $first mı, yoksa $second mı?");
+          await _speakText("Ece biraz durdu ve düşündü.");
+          await Future.delayed(const Duration(milliseconds: 500));
+          await _speakText("Sence $first mı, yoksa $second mı?");
+        }
       }
+    } catch (e) {
+      debugPrint("Interactive story speak error: $e");
     }
 
     if (!mounted) return;
 
     setState(() {
       _isSpeaking = false;
+      _choicesEnabled = true;
+    });
+  }
+
+  Future<void> _skipToChoices() async {
+    await _clickSound();
+    await _player.stop();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isSpeaking = false;
+      _choicesEnabled = true;
     });
   }
 
   Future<void> _choose(StoryChoice choice) async {
-    if (_isSpeaking) return;
+    if (!_choicesEnabled) return;
 
     await _clickSound();
-    await _voice.stop();
+    await _player.stop();
 
     empathyScore += choice.scores.empathy;
     friendshipScore += choice.scores.friendship;
     distanceScore += choice.scores.distance;
+    totalChoices++;
 
     if (choice.next != null && _story.nodes.containsKey(choice.next)) {
       setState(() {
         _currentNodeId = choice.next!;
         _isSpeaking = false;
+        _choicesEnabled = false;
       });
 
       final nextNode = _story.nodes[_currentNodeId]!;
@@ -176,11 +296,218 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
     }
   }
 
+  int _scoreOutOfTen(int rawScore) {
+    final maxPossible = max(totalChoices * 2, 1);
+    return ((rawScore / maxPossible) * 10).round().clamp(0, 10);
+  }
+
+  Map<String, int> _normalizedScores() {
+    return {
+      "empathy": _scoreOutOfTen(empathyScore),
+      "friendship": _scoreOutOfTen(friendshipScore),
+      "distance": _scoreOutOfTen(distanceScore),
+    };
+  }
+
+  Map<String, String> _buildParentAnalysis(String endingTitle) {
+    final scores = _normalizedScores();
+
+    final empathy = scores["empathy"] ?? 0;
+    final friendship = scores["friendship"] ?? 0;
+    final distance = scores["distance"] ?? 0;
+
+    String dominantArea;
+    String emotionalMeaning;
+    String developmentComment;
+    String parentSuggestion;
+
+    final hasStrongSocialPattern = friendship >= 7 || empathy >= 7;
+    final hasStrongBalancedSocialPattern =
+        empathy >= 7 && friendship >= 7 && distance <= 4;
+
+    if (hasStrongBalancedSocialPattern) {
+      dominantArea = "Güçlü sosyal bağ ve empatik yaklaşım";
+      emotionalMeaning =
+          "Çocuk, masal boyunca hem arkadaşlık kurmaya hem de zor durumda olan kişiye destek olmaya yönelik güçlü seçimler yaptı.";
+      developmentComment =
+          "Seçimler, çocuğun sosyal ilişki kurmaya açık olduğunu, yardım etme davranışını fark ettiğini ve olumlu sosyal temasları tercih ettiğini gösteriyor.";
+      parentSuggestion =
+          "Bu güçlü yönü yeni etkinlik vermekten çok günlük hayatta fark edip pekiştirmek daha anlamlı olur.";
+    } else if (empathy >= friendship && empathy >= distance) {
+      dominantArea = "Yardım etme eğilimi";
+      emotionalMeaning =
+          "Çocuk, zor durumda olan kişiye destek olmayı öne çıkaran seçimler yaptı.";
+      developmentComment =
+          "Seçimler, çocuğun başkasının ihtiyacını fark etmeye ve yardım etmeye açık olduğunu gösteriyor.";
+      parentSuggestion =
+          "Çocuğun yardım etme davranışını fark edip sözel olarak pekiştirmek uygun olur.";
+    } else if (friendship >= empathy && friendship >= distance) {
+      dominantArea = "Sosyal katılım ve yakınlaşma";
+      emotionalMeaning =
+          "Çocuk, birlikte oyun oynama, yakınlaşma ve sosyal bağ kurma yönünde seçimler yaptı.";
+      developmentComment =
+          "Seçimler, çocuğun sosyal ilişki başlatmaya ve oyun yoluyla bağ kurmaya açık olduğunu gösteriyor.";
+      parentSuggestion =
+          "Çocuğun sosyal isteğini destekleyen olumlu geri bildirimler verilebilir.";
+    } else if (hasStrongSocialPattern && distance <= 5) {
+      dominantArea = "Olumlu sosyal seçimler";
+      emotionalMeaning =
+          "Çocuk, masal içinde genel olarak sosyal ve destekleyici seçeneklere yöneldi.";
+      developmentComment =
+          "Seçimler, çocuğun arkadaşlık, yardımlaşma ve sosyal bağ kurma davranışlarını olumlu gördüğünü düşündürüyor.";
+      parentSuggestion =
+          "Bu davranışları günlük konuşmalarda pekiştirmek yeterli olabilir.";
+    } else {
+      dominantArea = "Temkinli yaklaşım ve güvenli alan ihtiyacı";
+      emotionalMeaning =
+          "Çocuk, bazı durumlarda mesafe koyma veya beklemeyi tercih eden seçimler yaptı.";
+      developmentComment =
+          "Bu seçimler tek başına olumsuz değildir; çocuk yeni sosyal durumlarda önce gözlem yapma ihtiyacı duyuyor olabilir.";
+      parentSuggestion =
+          "Çocuğu zorlamadan, seçenek sunarak desteklemek daha uygundur.";
+    }
+
+    return {
+      "dominantArea": dominantArea,
+      "emotionalMeaning": emotionalMeaning,
+      "developmentComment": developmentComment,
+      "parentSuggestion": parentSuggestion,
+      "endingTitle": endingTitle,
+    };
+  }
+
+  Future<void> _sendParentAnalysis(String endingTitle, StoryNode node) async {
+    if (_parentResultSent) return;
+
+    final analysis = _buildParentAnalysis(endingTitle);
+    final scores = _normalizedScores();
+
+    final empathy = scores["empathy"] ?? 0;
+    final friendship = scores["friendship"] ?? 0;
+    final distance = scores["distance"] ?? 0;
+
+    final payload = {
+      "type": "interactive_story_result",
+      "childNickname": _safeNickname,
+      "personality": widget.personality,
+      "avatarName": _safeAvatarName,
+      "storyId": "interactive_story",
+      "storyTitle": _story.title,
+      "storyMessage": endingTitle,
+      "selectedChoice":
+          "Empati: $empathy/10, Arkadaşlık: $friendship/10, Mesafe: $distance/10",
+      "dominantArea": analysis["dominantArea"],
+      "emotionalMeaning": analysis["emotionalMeaning"],
+      "developmentComment": analysis["developmentComment"],
+      "parentSuggestion": analysis["parentSuggestion"],
+      "parentPanelText":
+          "İnteraktif masal sonucu: $_safeNickname, '${_story.title}' masalını '$endingTitle' sonucu ile tamamladı.\n\n"
+          "Puan özeti: Empati $empathy/10, Arkadaşlık $friendship/10, Mesafe $distance/10\n\n"
+          "Baskın gelişim alanı: ${analysis["dominantArea"]}\n\n"
+          "Duygusal gözlem: ${analysis["emotionalMeaning"]}\n\n"
+          "Gelişimsel yorum: ${analysis["developmentComment"]}\n\n"
+          "Ebeveyn önerisi: ${analysis["parentSuggestion"]}\n\n"
+          "Not: Bu çıktı psikolojik tanı değildir; çocuğun uygulama içindeki seçim davranışlarına dayalı gelişimsel gözlem niteliğindedir.",
+      "createdAt": DateTime.now().toIso8601String(),
+    };
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse("$_baseUrl/interactive-story-result"),
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        _parentResultSent = true;
+      }
+
+      debugPrint("Parent analysis send status: ${response.statusCode}");
+    } catch (e) {
+      debugPrint("Parent analysis send error: $e");
+    }
+  }
+
+  Future<void> _finishStoryNow() async {
+    if (totalChoices <= 0) return;
+
+    await _clickSound();
+    await _player.stop();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isSpeaking = false;
+      _choicesEnabled = false;
+    });
+
+    String title;
+
+    if (friendshipScore >= empathyScore && friendshipScore >= distanceScore) {
+      title = "Neşeli Arkadaşlık";
+    } else if (empathyScore >= friendshipScore && empathyScore >= distanceScore) {
+      title = "İyilikle Gelen Dostluk";
+    } else {
+      title = "Temkinli Yaklaşım";
+    }
+
+    await _sendParentAnalysis(title, _currentNode);
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.white.withValues(alpha: 0.96),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(26),
+          ),
+          title: const Text(
+            "🌟 Masal tamamlandı",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          content: const Text(
+            "Sonuç ebeveyn paneline gönderildi.",
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 17,
+              height: 1.35,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _restartStory();
+              },
+              child: const Text("Tekrar Oyna"),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                Navigator.pop(context);
+              },
+              child: const Text("Çık"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _showEnding(StoryNode node) async {
     if (_isSpeaking) return;
 
     setState(() {
       _isSpeaking = true;
+      _choicesEnabled = false;
     });
 
     String title;
@@ -209,12 +536,19 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
       }
     }
 
-    await _speakLongText(node.text);
+    try {
+      await _speakLongText(node.text);
+    } catch (e) {
+      debugPrint("Ending speak error: $e");
+    }
+
+    await _sendParentAnalysis(title, node);
 
     if (!mounted) return;
 
     setState(() {
       _isSpeaking = false;
+      _choicesEnabled = true;
     });
 
     showDialog(
@@ -227,17 +561,17 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
             borderRadius: BorderRadius.circular(26),
           ),
           title: Text(
-            "$emoji $title",
+            "$emoji Masal tamamlandı",
             textAlign: TextAlign.center,
             style: const TextStyle(fontWeight: FontWeight.w900),
           ),
           content: Text(
-            node.text,
+            "$title\n\nHarika seçimler yaptın. Masalı başarıyla tamamladın.",
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontSize: 17,
               height: 1.35,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w700,
             ),
           ),
           actionsAlignment: MainAxisAlignment.center,
@@ -263,14 +597,17 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
   }
 
   Future<void> _restartStory() async {
-    await _voice.stop();
+    await _player.stop();
 
     setState(() {
       _currentNodeId = _story.startNode;
       empathyScore = 0;
       friendshipScore = 0;
       distanceScore = 0;
+      totalChoices = 0;
       _isSpeaking = false;
+      _choicesEnabled = false;
+      _parentResultSent = false;
     });
 
     await Future.delayed(const Duration(milliseconds: 400));
@@ -290,8 +627,8 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
 
   @override
   void dispose() {
-    _voice.stop();
-    _voice.dispose();
+    _player.stop();
+    _player.dispose();
     super.dispose();
   }
 
@@ -355,7 +692,7 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
                       _GlassCircleButton(
                         icon: Icons.arrow_back_rounded,
                         onTap: () async {
-                          await _voice.stop();
+                          await _player.stop();
                           if (!mounted) return;
                           Navigator.pop(context);
                         },
@@ -389,7 +726,7 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
                           Expanded(
                             child: _StoryChoiceCard(
                               choice: node.choices[0],
-                              disabled: _isSpeaking,
+                              disabled: !_choicesEnabled,
                               onTap: () => _choose(node.choices[0]),
                             ),
                           ),
@@ -397,7 +734,7 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
                           Expanded(
                             child: _StoryChoiceCard(
                               choice: node.choices[1],
-                              disabled: _isSpeaking,
+                              disabled: !_choicesEnabled,
                               onTap: () => _choose(node.choices[1]),
                             ),
                           ),
@@ -412,11 +749,60 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
                       ),
                     ),
                   const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: totalChoices > 0 ? _finishStoryNow : null,
+                      icon: const Icon(Icons.flag_rounded),
+                      label: const Text("Masalı Bitir"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF7A4BD8),
+                        side: const BorderSide(
+                          color: Color(0xFF7A4BD8),
+                          width: 2,
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_isSpeaking && node.choices.length >= 2) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _skipToChoices,
+                        icon: const Icon(Icons.touch_app_rounded),
+                        label: const Text("Seçime Geç"),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF7A4BD8),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   _GlassPanel(
                     child: Text(
                       _isSpeaking
                           ? "Masalı dinleyelim..."
-                          : "Seçimini yapmak için karta dokun 😊",
+                          : _choicesEnabled
+                              ? "Seçimini yapmak için karta dokun 😊"
+                              : "Hazırlanıyor...",
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 18,
@@ -508,8 +894,20 @@ class _StoryChoiceCard extends StatelessWidget {
     required this.disabled,
   });
 
+  String _cleanAssetPath(String path) {
+    var clean = path.trim();
+
+    if (clean.startsWith("assets/assets/")) {
+      clean = clean.replaceFirst("assets/assets/", "assets/");
+    }
+
+    return clean;
+  }
+
   String _pngPath(String path) {
-    return path
+    final clean = _cleanAssetPath(path);
+
+    return clean
         .replaceAll(".jfif", ".png")
         .replaceAll(".jpeg", ".png")
         .replaceAll(".jpg", ".png");
@@ -520,7 +918,7 @@ class _StoryChoiceCard extends StatelessWidget {
     final imagePath = _pngPath(choice.image);
 
     return Opacity(
-      opacity: disabled ? 0.75 : 1,
+      opacity: disabled ? 0.58 : 1,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(30),
         child: BackdropFilter(
@@ -599,15 +997,20 @@ class InteractiveStory {
   });
 
   factory InteractiveStory.fromJson(Map<String, dynamic> json) {
-    final nodesJson = json['nodes'] as Map<String, dynamic>;
+    final rawNodes = json['nodes'];
+
+    final nodesJson =
+        rawNodes is Map<String, dynamic> ? rawNodes : <String, dynamic>{};
 
     return InteractiveStory(
-      title: json['title'] ?? 'İnteraktif Masal',
-      startNode: json['startNode'] ?? 'start',
+      title: (json['title'] ?? 'İnteraktif Masal').toString(),
+      startNode: (json['startNode'] ?? 'start').toString(),
       nodes: nodesJson.map(
         (key, value) => MapEntry(
           key,
-          StoryNode.fromJson(value as Map<String, dynamic>),
+          StoryNode.fromJson(
+            value is Map<String, dynamic> ? value : <String, dynamic>{},
+          ),
         ),
       ),
     );
@@ -633,15 +1036,16 @@ class StoryNode {
     final choicesJson = json['choices'];
 
     return StoryNode(
-      text: json['text'] ?? '',
-      question: json['question'],
-      choicePrompt: json['choicePrompt'],
-      end: json['end'],
+      text: (json['text'] ?? '').toString(),
+      question: json['question']?.toString(),
+      choicePrompt: json['choicePrompt']?.toString(),
+      end: json['end']?.toString(),
       choices: choicesJson is List
           ? choicesJson
+              .whereType<Map>()
               .map(
                 (item) => StoryChoice.fromJson(
-                  item as Map<String, dynamic>,
+                  Map<String, dynamic>.from(item),
                 ),
               )
               .toList()
@@ -665,11 +1069,13 @@ class StoryChoice {
 
   factory StoryChoice.fromJson(Map<String, dynamic> json) {
     return StoryChoice(
-      title: json['title'] ?? '',
-      image: json['image'] ?? '',
-      next: json['next'],
+      title: (json['title'] ?? '').toString(),
+      image: (json['image'] ?? '').toString(),
+      next: json['next']?.toString(),
       scores: StoryScores.fromJson(
-        json['scores'] as Map<String, dynamic>? ?? {},
+        json['scores'] is Map<String, dynamic>
+            ? json['scores'] as Map<String, dynamic>
+            : <String, dynamic>{},
       ),
     );
   }
@@ -688,9 +1094,15 @@ class StoryScores {
 
   factory StoryScores.fromJson(Map<String, dynamic> json) {
     return StoryScores(
-      empathy: json['empathy'] ?? 0,
-      friendship: json['friendship'] ?? 0,
-      distance: json['distance'] ?? 0,
+      empathy: json['empathy'] is int
+          ? json['empathy'] as int
+          : int.tryParse((json['empathy'] ?? 0).toString()) ?? 0,
+      friendship: json['friendship'] is int
+          ? json['friendship'] as int
+          : int.tryParse((json['friendship'] ?? 0).toString()) ?? 0,
+      distance: json['distance'] is int
+          ? json['distance'] as int
+          : int.tryParse((json['distance'] ?? 0).toString()) ?? 0,
     );
   }
 }

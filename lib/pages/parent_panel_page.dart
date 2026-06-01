@@ -1,18 +1,21 @@
+import 'interactive_story_results_page.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:kiddoai/services/app_settings_service.dart';
-
-import 'paint_page.dart';
+import 'parent_saved_paintings_store.dart';
+import 'painting_downloader.dart';
 
 class ParentPanelPage extends StatelessWidget {
   const ParentPanelPage({super.key});
 
   @override
   Widget build(BuildContext context) {
+    ParentSavedPaintingsStore.cleanupExpired();
+
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         backgroundColor: const Color(0xFFF6F7FB),
         appBar: AppBar(
@@ -33,6 +36,7 @@ class ParentPanelPage extends StatelessWidget {
             indicatorColor: Color(0xFFFFC107),
             tabs: [
               Tab(icon: Icon(Icons.chat_rounded), text: "Konuşmalar"),
+              Tab(icon: Icon(Icons.auto_stories_rounded), text: "Masallar"),
               Tab(icon: Icon(Icons.photo_library_rounded), text: "Resimler"),
               Tab(icon: Icon(Icons.settings_rounded), text: "Ayarlar"),
             ],
@@ -41,6 +45,7 @@ class ParentPanelPage extends StatelessWidget {
         body: const TabBarView(
           children: [
             _ChatHistoryView(),
+            InteractiveStoryResultsPage(),
             _SavedPaintingsView(),
             _ParentSettingsView(),
           ],
@@ -517,7 +522,7 @@ class _ChatHistoryViewState extends State<_ChatHistoryView> {
                                           ],
                                         ),
                                         const SizedBox(height: 10),
-                                        ...messages.take(10).map((item) {
+                                        ...messages.reversed.take(10).map((item) {
                                           final childMessage =
                                               (item["childMessage"] ?? "")
                                                   .toString();
@@ -838,85 +843,217 @@ class _EmptyChatView extends StatelessWidget {
   }
 }
 
-class _SavedPaintingsView extends StatelessWidget {
+class _SavedPaintingsView extends StatefulWidget {
   const _SavedPaintingsView();
 
   @override
+  State<_SavedPaintingsView> createState() => _SavedPaintingsViewState();
+}
+
+class _SavedPaintingsViewState extends State<_SavedPaintingsView> {
+  late Future<List<SavedPainting>> _paintingsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _reloadLocalFuture();
+  }
+
+  void _reloadLocalFuture() {
+    _paintingsFuture = ParentSavedPaintingsStore.getPaintings();
+  }
+
+  Future<void> _reload() async {
+    await ParentSavedPaintingsStore.cleanupExpired();
+    if (!mounted) return;
+    setState(_reloadLocalFuture);
+  }
+
+  Future<void> _deletePainting(SavedPainting item) async {
+    await ParentSavedPaintingsStore.deletePainting(item.id);
+    await _reload();
+  }
+
+  Future<void> _downloadPainting(SavedPainting item) async {
+    await downloadPaintingBytes(
+      bytes: item.bytes,
+      fileName: 'kiddo_ai_boyama_${item.id}.png',
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<ParentSavedPainting>>(
-      valueListenable: ParentSavedPaintingsStore.paintings,
-      builder: (context, paintings, _) {
+    return FutureBuilder<List<SavedPainting>>(
+      future: _paintingsFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text(
+                'Resimler yüklenirken hata oluştu:\n${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF5B3A00),
+                ),
+              ),
+            ),
+          );
+        }
+
+        final paintings = snapshot.data ?? [];
+
         if (paintings.isEmpty) {
           return const _EmptySavedPaintingsView();
         }
 
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              _HeaderSummaryCard(count: paintings.length),
-              const SizedBox(height: 16),
-              Expanded(
-                child: GridView.builder(
-                  itemCount: paintings.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 14,
-                    crossAxisSpacing: 14,
-                    childAspectRatio: 0.78,
+        return RefreshIndicator(
+          onRefresh: _reload,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                _HeaderSummaryCard(count: paintings.length),
+                const SizedBox(height: 10),
+                const Text(
+                  'Kaydedilen resimler Firestore içinde 7 gün saklanır. Süresi dolan resimler uygulama açıldığında otomatik silinir.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF8A6A00),
                   ),
-                  itemBuilder: (context, index) {
-                    final item = paintings[index];
-
-                    return GestureDetector(
-                      onTap: () {
-                        showDialog(
-                          context: context,
-                          builder: (_) => _PaintingPreviewDialog(item: item),
-                        );
-                      },
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(24),
-                          boxShadow: const [
-                            BoxShadow(
-                              blurRadius: 8,
-                              offset: Offset(0, 3),
-                              color: Color(0x12000000),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Image.memory(
-                                  item.imageBytes,
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Text(
-                                item.title,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF5B3A00),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Expanded(
+                  child: GridView.builder(
+                    itemCount: paintings.length,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 14,
+                      crossAxisSpacing: 14,
+                      childAspectRatio: 0.62,
+                    ),
+                    itemBuilder: (context, index) {
+                      final item = paintings[index];
+
+                      return GestureDetector(
+                        onTap: () async {
+                          await showDialog(
+                            context: context,
+                            builder: (_) => _PaintingPreviewDialog(
+                              item: item,
+                              onDownload: () => _downloadPainting(item),
+                              onDelete: () async {
+                                Navigator.pop(context);
+                                await _deletePainting(item);
+                              },
+                            ),
+                          );
+                          await _reload();
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: const [
+                              BoxShadow(
+                                blurRadius: 8,
+                                offset: Offset(0, 3),
+                                color: Color(0x12000000),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Image.memory(
+                                    item.bytes,
+                                    fit: BoxFit.contain,
+                                  ),
+                                ),
+                              ),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(10, 4, 10, 10),
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      item.title,
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        color: Color(0xFF5B3A00),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Kayıt: ${ParentPanelPage.formatDateTime(item.createdAt)}',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.blueGrey,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Silinme: ${ParentPanelPage.formatDateTime(item.expiresAt)}',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.red.shade400,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'İndir',
+                                          onPressed: () =>
+                                              _downloadPainting(item),
+                                          icon: const Icon(
+                                            Icons.download_rounded,
+                                            color: Color(0xFF5B3A00),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Sil',
+                                          onPressed: () =>
+                                              _deletePainting(item),
+                                          icon: Icon(
+                                            Icons.delete_outline_rounded,
+                                            color: Colors.red.shade400,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -939,7 +1076,7 @@ class _HeaderSummaryCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
       ),
       child: Text(
-        '$count adet boyanmış resim kaydedildi.',
+        '$count adet boyanmış resim kayıtlı. Her kayıt 7 gün saklanır.',
         style: const TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w800,
@@ -969,9 +1106,15 @@ class _EmptySavedPaintingsView extends StatelessWidget {
 }
 
 class _PaintingPreviewDialog extends StatelessWidget {
-  final ParentSavedPainting item;
+  final SavedPainting item;
+  final Future<void> Function() onDownload;
+  final Future<void> Function() onDelete;
 
-  const _PaintingPreviewDialog({required this.item});
+  const _PaintingPreviewDialog({
+    required this.item,
+    required this.onDownload,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -993,10 +1136,34 @@ class _PaintingPreviewDialog extends StatelessWidget {
                   ),
                 ),
                 IconButton(
+                  tooltip: 'İndir',
+                  onPressed: onDownload,
+                  icon: const Icon(Icons.download_rounded),
+                ),
+                IconButton(
+                  tooltip: 'Sil',
+                  onPressed: onDelete,
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    color: Colors.red.shade400,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Kapat',
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close),
                 ),
               ],
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Kayıt zamanı: ${ParentPanelPage.formatDateTime(item.createdAt)}\nOtomatik silinme: ${ParentPanelPage.formatDateTime(item.expiresAt)}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.blueGrey,
+                ),
+              ),
             ),
             const SizedBox(height: 14),
             Expanded(
@@ -1004,7 +1171,7 @@ class _PaintingPreviewDialog extends StatelessWidget {
                 minScale: 1,
                 maxScale: 5,
                 child: Image.memory(
-                  item.imageBytes,
+                  item.bytes,
                   fit: BoxFit.contain,
                 ),
               ),
@@ -1015,7 +1182,6 @@ class _PaintingPreviewDialog extends StatelessWidget {
     );
   }
 }
-
 class _ParentSettingsView extends StatefulWidget {
   const _ParentSettingsView();
 

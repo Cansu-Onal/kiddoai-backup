@@ -1,6 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../services/realtime_service.dart';
+import 'package:http/http.dart' as http;
+
 import 'story_page.dart';
 
 class StoryDetailPage extends StatefulWidget {
@@ -22,7 +29,7 @@ class StoryDetailPage extends StatefulWidget {
 }
 
 class _StoryDetailPageState extends State<StoryDetailPage> {
-  final RealtimeService _rt = RealtimeService();
+  final AudioPlayer _player = AudioPlayer();
 
   bool _isSpeaking = false;
   bool _isLoadingVoice = false;
@@ -34,18 +41,23 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
 
   late List<String> _pages;
 
+  static String get _baseUrl {
+    if (kIsWeb) return "http://localhost:3000";
+    return "http://10.0.2.2:3000";
+  }
+
   @override
   void initState() {
     super.initState();
 
     _pages = _paginateStoryText(widget.story.metin, maxChars: 280);
 
-    _rt.onStatus = (msg) {
+    _player.onPlayerComplete.listen((_) {
       if (!mounted) return;
       setState(() {
-        _status = msg;
+        _isSpeaking = false;
       });
-    };
+    });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_autoStarted) return;
@@ -77,13 +89,9 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
     }
 
     final last = buffer.toString().trim();
-    if (last.isNotEmpty) {
-      pages.add(last);
-    }
+    if (last.isNotEmpty) pages.add(last);
 
-    if (pages.isEmpty) {
-      pages.add(text.trim());
-    }
+    if (pages.isEmpty) pages.add(text.trim());
 
     return pages;
   }
@@ -103,6 +111,35 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
       default:
         return "assets/story_themes/default_story.png";
     }
+  }
+
+  Future<Uint8List> _getTtsBytes(String text) async {
+    final response = await http
+        .post(
+          Uri.parse("$_baseUrl/tts"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"text": text}),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode != 200) {
+      throw Exception("TTS API hata: ${response.statusCode}");
+    }
+
+    return response.bodyBytes;
+  }
+
+  Future<void> _speakText(String text) async {
+    final cleanText = text.trim();
+    if (cleanText.isEmpty) return;
+
+    final bytes = await _getTtsBytes(cleanText);
+
+    if (_stopReading) return;
+
+    await _player.stop();
+    await _player.play(BytesSource(bytes));
+    await _player.onPlayerComplete.first;
   }
 
   Future<void> _startStoryReading() async {
@@ -136,13 +173,7 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
           textToSpeak = "$textToSpeak Masalın mesajı: ${widget.story.mesaj}";
         }
 
-        await _rt.speakAvatarText(
-         text: textToSpeak,
-  nickname: widget.nickname,
-  personality: widget.personality,
-  avatarName: widget.avatarName,
-  saveToPanel: false,
-        );
+        await _speakText(textToSpeak);
 
         if (_stopReading) break;
 
@@ -158,6 +189,7 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
       }
 
       if (!mounted) return;
+
       setState(() {
         _isSpeaking = false;
         _isLoadingVoice = false;
@@ -165,6 +197,7 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
       });
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         _isSpeaking = false;
         _isLoadingVoice = false;
@@ -179,7 +212,7 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
 
   Future<void> _stopStory() async {
     _stopReading = true;
-    await _rt.disconnect();
+    await _player.stop();
 
     if (!mounted) return;
     setState(() {
@@ -249,7 +282,6 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
                 );
               },
             ),
-
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -265,14 +297,14 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
                 ),
               ),
             ),
-
             Positioned.fill(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(28, 26, 28, 26),
                 child: Row(
                   children: [
                     SizedBox(
-                      width: MediaQuery.of(context).size.width > 900 ? 360 : 300,
+                      width:
+                          MediaQuery.of(context).size.width > 900 ? 360 : 300,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -375,7 +407,9 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
 
   @override
   void dispose() {
-    _rt.dispose();
+    _stopReading = true;
+    _player.stop();
+    _player.dispose();
     super.dispose();
   }
 
@@ -464,8 +498,9 @@ class _StoryDetailPageState extends State<StoryDetailPage> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed:
-                          _isLoadingVoice || _isSpeaking ? null : _startStoryReading,
+                      onPressed: _isLoadingVoice || _isSpeaking
+                          ? null
+                          : _startStoryReading,
                       icon: Icon(
                         _isSpeaking
                             ? Icons.volume_up_rounded

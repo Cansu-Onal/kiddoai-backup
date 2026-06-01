@@ -1,8 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
-import '../services/tts_service.dart';
 import 'story_detail_page.dart';
 
 class StoryModel {
@@ -55,15 +62,56 @@ class StoryPage extends StatefulWidget {
 
 class _StoryPageState extends State<StoryPage> {
   late Future<List<StoryModel>> _storiesFuture;
-  final TtsService _ttsService = TtsService.instance;
+  final AudioPlayer _player = AudioPlayer();
 
   int? _lastTappedStoryId;
+  bool _isSpeaking = false;
+
+  String _gender = "Erkek";
+
+  static String get _baseUrl {
+    if (kIsWeb) {
+      return "http://localhost:3000";
+    }
+    return "http://10.0.2.2:3000";
+  }
 
   @override
   void initState() {
     super.initState();
     _storiesFuture = _loadStories();
-    _ttsService.applyPersonality(widget.personality);
+    _loadGender();
+
+    _player.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+      setState(() => _isSpeaking = false);
+    });
+  }
+
+  Future<void> _loadGender() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection("users")
+          .doc(user.uid)
+          .collection("settings")
+          .doc("avatarProfile")
+          .get();
+
+      if (!doc.exists) return;
+
+      final data = doc.data() ?? {};
+
+      if (!mounted) return;
+
+      setState(() {
+        _gender = (data["gender"] ?? "Erkek").toString();
+      });
+    } catch (e) {
+      debugPrint("StoryPage gender okunamadı: $e");
+    }
   }
 
   Future<List<StoryModel>> _loadStories() async {
@@ -75,26 +123,64 @@ class _StoryPageState extends State<StoryPage> {
     return jsonData.map((e) => StoryModel.fromJson(e)).toList();
   }
 
+  Future<Uint8List> _getTtsBytes(String text) async {
+    final response = await http
+        .post(
+          Uri.parse("$_baseUrl/tts"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "text": text,
+            "gender": _gender,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode != 200) {
+      throw Exception("TTS API hata: ${response.statusCode}");
+    }
+
+    return response.bodyBytes;
+  }
+
+  Future<void> _speakText(String text) async {
+    final cleanText = text.trim();
+    if (cleanText.isEmpty) return;
+
+    try {
+      setState(() => _isSpeaking = true);
+
+      await _player.stop();
+
+      final bytes = await _getTtsBytes(cleanText);
+
+      await _player.play(BytesSource(bytes));
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => _isSpeaking = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Ses oynatılamadı: $e")),
+      );
+    }
+  }
+
   Future<void> _speakTitle(StoryModel story) async {
     setState(() {
       _lastTappedStoryId = story.id;
     });
 
-    try {
-      await _ttsService.speak(story.baslik);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Başlık okunamadı: $e")),
-      );
-    }
+    await _speakText(story.baslik);
   }
 
   Future<void> _handleStoryTap(StoryModel story) async {
     if (_lastTappedStoryId == story.id) {
-      await _ttsService.stop();
+      await _player.stop();
 
       if (!mounted) return;
+
+      setState(() => _isSpeaking = false);
+
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -114,7 +200,8 @@ class _StoryPageState extends State<StoryPage> {
 
   @override
   void dispose() {
-    _ttsService.stop();
+    _player.stop();
+    _player.dispose();
     super.dispose();
   }
 
@@ -191,7 +278,9 @@ class _StoryPageState extends State<StoryPage> {
                   subtitle: Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
-                      story.kategori,
+                      isSelected && _isSpeaking
+                          ? "Başlık okunuyor..."
+                          : story.kategori,
                       style: TextStyle(
                         color: Colors.grey.shade700,
                         fontSize: 13,

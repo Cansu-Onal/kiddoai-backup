@@ -46,17 +46,17 @@ class _MusicPageState extends State<MusicPage> {
     _Song(
       title: "İzmir Marşı",
       audioPath: "audio/izmir_marsi.mp3",
-      bgPath: "assets/audio/izmir_marsi_bg.png",
+      bgPath: "assets/audio/izmir_marsi_bg.jpg",
     ),
     _Song(
       title: "Kırmızı Balık",
       audioPath: "audio/kirmizi_balik.mp3",
-      bgPath: "assets/audio/kirmizi_balik_bg.png",
+      bgPath: "assets/audio/kirmizi_balik_bg.jpg",
     ),
     _Song(
       title: "Mini Mini Bir Kuş",
       audioPath: "audio/mini_mini_bir_kus.mp3",
-      bgPath: "assets/audio/mini_mini_bir_kus_bg.png",
+      bgPath: "assets/audio/mini_mini_bir_kus_bg.jpg",
     ),
   ];
 

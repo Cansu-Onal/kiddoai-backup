@@ -1,9 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'avatar_questions_page.dart';
-import 'home_page.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -91,75 +89,8 @@ class _RegisterPageState extends State<RegisterPage> {
 
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const AvatarQuestionsPage()),
-    );
-  }
-
-  Future<void> _goHomeAfterLogin() async {
-    final user = FirebaseAuth.instance.currentUser;
-
-    String nickname = "Arkadaşım";
-    String personality = "Neşeli";
-    int dailyLimitMinutes = 30;
-
-    if (user != null) {
-      try {
-        final db = FirebaseFirestore.instance;
-
-        final avatarProfileDoc = await db
-            .collection("users")
-            .doc(user.uid)
-            .collection("settings")
-            .doc("avatarProfile")
-            .get();
-
-        final appSettingsDoc = await db
-            .collection("users")
-            .doc(user.uid)
-            .collection("settings")
-            .doc("appSettings")
-            .get();
-
-        final profileData = avatarProfileDoc.data() ?? {};
-        final appData = appSettingsDoc.data() ?? {};
-
-        nickname = (profileData["nickname"] ??
-                appData["nickname"] ??
-                profileData["childName"] ??
-                appData["childName"] ??
-                nickname)
-            .toString();
-
-        personality =
-            (profileData["personality"] ?? appData["personality"] ?? personality)
-                .toString();
-
-        final rawLimit =
-            appData["dailyLimitMinutes"] ?? profileData["dailyLimitMinutes"];
-
-        if (rawLimit is int) {
-          dailyLimitMinutes = rawLimit;
-        } else if (rawLimit is num) {
-          dailyLimitMinutes = rawLimit.toInt();
-        } else if (rawLimit != null) {
-          dailyLimitMinutes =
-              int.tryParse(rawLimit.toString()) ?? dailyLimitMinutes;
-        }
-      } catch (_) {
-        // Firestore verisi okunamazsa varsayılanlarla ana sayfa açılır.
-      }
-    }
-
-    if (!mounted) return;
-
-    Navigator.pushReplacement(
-      context,
       MaterialPageRoute(
-        builder: (_) => HomePage(
-          nickname: nickname,
-          personality: personality,
-          dailyLimitMinutes: dailyLimitMinutes,
-        ),
+        builder: (_) => const AvatarQuestionsPage(),
       ),
     );
   }
@@ -194,7 +125,7 @@ class _RegisterPageState extends State<RegisterPage> {
     );
 
     _showSnack("Giriş başarılı.");
-    await _goHomeAfterLogin();
+    await _goAvatarQuestions();
   }
 
   Future<void> _handleRegister({

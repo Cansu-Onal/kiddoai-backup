@@ -208,7 +208,7 @@ class _HomePageState extends State<HomePage> {
       ),
       _HomeMenuItem(
         title: "Deniz Oyunu",
-        image: "assets/icons/beach.jpeg",
+        image: "assets/icons/beach.png",
         color: const Color(0xFF64B5F6),
         onTap: () async {
           await _clickSound();

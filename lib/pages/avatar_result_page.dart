@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kiddoai/pages/home_page.dart';
-import 'package:kiddoai/services/realtime_service.dart';
+import 'package:kiddoai/services/elevenlabs_voice_service.dart';
 
 import 'avatar_animated_widget.dart';
 
@@ -31,12 +32,34 @@ class AvatarResultPage extends StatefulWidget {
 
 class _AvatarResultPageState extends State<AvatarResultPage>
     with WidgetsBindingObserver {
-  final RealtimeService _rt = RealtimeService();
+  final ElevenLabsVoiceService _voice = ElevenLabsVoiceService();
 
   bool _isTalking = false;
   bool _hasSpoken = false;
+  bool _disposed = false;
 
   String _status = "Avatar hazır";
+
+  Timer? _girlTalkTimer;
+  bool _showGirlTalking = false;
+
+  static const String girlNormalAsset = "assets/avatars/normal_kiz.png";
+  static const String girlTalkingAsset = "assets/avatars/konusan_kiz.png";
+
+  bool get _isGirl => widget.gender == "Kız";
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  String _buildIntroText() {
+    return "Merhaba ${widget.nickname}! "
+        "Ben ${widget.favorite}. "
+        "Artık senin oyun, masal ve sohbet arkadaşınım. "
+        "Birlikte çok eğlenceli şeyler yapacağız.";
+  }
 
   Future<void> _clickSound() async {
     await SystemSound.play(SystemSoundType.click);
@@ -47,27 +70,117 @@ class _AvatarResultPageState extends State<AvatarResultPage>
     await action();
   }
 
-  String _buildIntroText() {
-    return "Merhaba ${widget.nickname}! "
-        "Ben ${widget.favorite}. "
-        "Artık senin oyun, masal ve sohbet arkadaşınım. "
-        "Birlikte çok eğlenceli şeyler yapacağız.";
+  void _startGirlTalkingLoop() {
+    _girlTalkTimer?.cancel();
+
+    setState(() {
+      _showGirlTalking = true;
+    });
+
+    _girlTalkTimer = Timer.periodic(const Duration(milliseconds: 180), (_) {
+      if (!mounted || _disposed || !_isTalking) return;
+
+      setState(() {
+        _showGirlTalking = !_showGirlTalking;
+      });
+    });
+  }
+
+  void _stopGirlTalkingLoop() {
+    _girlTalkTimer?.cancel();
+    _girlTalkTimer = null;
+
+    if (!mounted || _disposed) return;
+
+    setState(() {
+      _showGirlTalking = false;
+    });
   }
 
   Future<void> _startAvatarIntro() async {
-    if (_isTalking) return;
+    if (_isTalking || _disposed) return;
 
     setState(() {
       _isTalking = true;
       _status = "Avatar sesi hazırlanıyor...";
     });
 
-    await _rt.speakAvatarText(
-      text: _buildIntroText(),
-      nickname: widget.nickname,
-      personality: widget.personality,
-      avatarName: widget.favorite,
-      saveToPanel: false,
+    if (_isGirl) {
+      _startGirlTalkingLoop();
+    }
+
+    try {
+      if (_isGirl) {
+        await _voice.speak(
+  _buildIntroText(),
+  gender: widget.gender,
+);
+      } else {
+        await _voice.speak(_buildIntroText());
+      }
+
+      if (!mounted || _disposed) return;
+
+      _stopGirlTalkingLoop();
+
+      setState(() {
+        _isTalking = false;
+        _hasSpoken = true;
+        _status = "Tanıtım tamamlandı";
+      });
+    } catch (e) {
+      if (!mounted || _disposed) return;
+
+      _stopGirlTalkingLoop();
+
+      setState(() {
+        _isTalking = false;
+        _status = "Ses oynatılamadı";
+      });
+
+      debugPrint("Avatar ses hatası: $e");
+    }
+  }
+
+  Future<void> _stopVoice() async {
+    try {
+      await _voice.stop();
+    } catch (_) {}
+
+    _stopGirlTalkingLoop();
+
+    if (!mounted || _disposed) return;
+
+    setState(() {
+      _isTalking = false;
+      _status = "Avatar hazır";
+    });
+  }
+
+  Widget _buildAvatarView() {
+    if (_isGirl) {
+      final String asset =
+          _isTalking && _showGirlTalking ? girlTalkingAsset : girlNormalAsset;
+
+      return SizedBox(
+        width: 280,
+        child: Image.asset(
+          asset,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            return const Icon(
+              Icons.person,
+              size: 160,
+              color: Colors.pink,
+            );
+          },
+        ),
+      );
+    }
+
+    return AnimatedAvatar(
+      isTalking: _isTalking,
+      width: 280,
     );
   }
 
@@ -107,59 +220,20 @@ class _AvatarResultPageState extends State<AvatarResultPage>
   }
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-
-    _rt.onStatus = (msg) {
-      if (!mounted) return;
-      setState(() => _status = msg);
-    };
-
-    _rt.onEvent = (e) {
-      if (!mounted) return;
-
-      final type = e["type"]?.toString();
-
-      if (type == "assistant_audio_start") {
-        setState(() {
-          _isTalking = true;
-          _status = "Avatar konuşuyor...";
-        });
-        return;
-      }
-
-      if (type == "assistant_done") {
-        setState(() {
-          _isTalking = false;
-          _hasSpoken = true;
-          _status = "Tanıtım tamamlandı";
-        });
-        return;
-      }
-
-      if (type == "assistant_error") {
-        final errorMessage = (e["message"] ?? "").toString();
-
-        setState(() {
-          _isTalking = false;
-          _status = errorMessage.isEmpty
-              ? "Ses oynatılamadı"
-              : "Ses oynatılamadı: $errorMessage";
-        });
-        return;
-      }
-    };
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      await _stopVoice();
+    }
   }
 
   @override
   void dispose() {
+    _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
-
-    _rt.onStatus = null;
-    _rt.onEvent = null;
-    _rt.dispose();
-
+    _girlTalkTimer?.cancel();
+    _voice.stop();
+    _voice.dispose();
     super.dispose();
   }
 
@@ -182,10 +256,7 @@ class _AvatarResultPageState extends State<AvatarResultPage>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                AnimatedAvatar(
-                  isTalking: _isTalking,
-                  width: 280,
-                ),
+                _buildAvatarView(),
                 const SizedBox(height: 18),
                 Text(
                   "${widget.favorite} hazır! ✨",
@@ -243,14 +314,15 @@ class _AvatarResultPageState extends State<AvatarResultPage>
                   runSpacing: 12,
                   children: [
                     FilledButton(
-                      onPressed: _isTalking
-                          ? null
-                          : () => _handleTap(_startAvatarIntro),
+                      onPressed:
+                          _isTalking ? null : () => _handleTap(_startAvatarIntro),
                       child: Text(startLabel),
                     ),
                     FilledButton.tonal(
                       onPressed: () => _handleTap(() async {
-                        if (!mounted) return;
+                        await _stopVoice();
+
+                        if (!context.mounted) return;
 
                         Navigator.push(
                           context,
@@ -267,7 +339,9 @@ class _AvatarResultPageState extends State<AvatarResultPage>
                     ),
                     OutlinedButton(
                       onPressed: () => _handleTap(() async {
-                        if (!mounted) return;
+                        await _stopVoice();
+
+                        if (!context.mounted) return;
                         Navigator.pop(context);
                       }),
                       child: const Text("Geri"),

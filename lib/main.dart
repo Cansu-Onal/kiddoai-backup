@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
-import 'pages/intro_page.dart';
+import 'pages/welcome_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,7 +29,7 @@ class KiddoAIApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFFFFF9C4),
       ),
-      home: const IntroPage(),
+      home: const WelcomePage(),
     );
   }
 }

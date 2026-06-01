@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kiddoai/services/elevenlabs_voice_service.dart';
@@ -18,6 +20,9 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
   int _roundIndex = 0;
   bool _locked = false;
   bool _started = false;
+  bool _isDisposed = false;
+
+  String _gender = "Erkek";
 
   String? _selectedOptionId;
   bool? _lastAnswerCorrect;
@@ -41,8 +46,7 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
           image: "assets/images/slippers.jfif",
           isCorrect: true,
           hintVoice: "Ayağımıza denizde rahat olacak ne giyebiliriz?",
-          successVoice:
-              "Harikasın! Terlik deniz için çok doğru bir seçim.",
+          successVoice: "Harikasın! Terlik deniz için çok doğru bir seçim.",
         ),
         BeachOption(
           id: "hat",
@@ -158,12 +162,13 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
   int get _correctNeeded =>
       _currentRound.options.where((option) => option.isCorrect).length;
 
-  int get _correctSelectedCount =>
-      _selectedCorrectIds.where((id) {
-        return _currentRound.options.any(
-          (option) => option.id == id && option.isCorrect,
-        );
-      }).length;
+  int get _correctSelectedCount {
+    return _selectedCorrectIds.where((id) {
+      return _currentRound.options.any(
+        (option) => option.id == id && option.isCorrect,
+      );
+    }).length;
+  }
 
   bool get _roundCompleted => _correctSelectedCount >= _correctNeeded;
 
@@ -183,9 +188,55 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
       ),
     );
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startScenario();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadGender();
+      await _startScenario();
     });
+  }
+
+  Future<void> _loadGender() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection("users")
+          .doc(user.uid)
+          .collection("settings")
+          .doc("avatarProfile")
+          .get();
+
+      if (!doc.exists) return;
+
+      final data = doc.data() ?? {};
+
+      if (!mounted || _isDisposed) return;
+
+      setState(() {
+        _gender = (data["gender"] ?? "Erkek").toString();
+      });
+    } catch (e) {
+      debugPrint("BeachScenario gender okunamadı: $e");
+    }
+  }
+
+  Future<void> _safeSpeak(String text) async {
+    if (_isDisposed || !mounted) return;
+
+    final cleanText = text.trim();
+    if (cleanText.isEmpty) return;
+
+    try {
+      await _voice.stop();
+      if (_isDisposed || !mounted) return;
+
+      await _voice.speak(
+        cleanText,
+        gender: _gender,
+      );
+    } catch (e) {
+      debugPrint("Beach scenario voice error: $e");
+    }
   }
 
   Future<void> _startScenario() async {
@@ -196,15 +247,15 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
       _locked = true;
     });
 
-    await _voice.speak(
+    await _safeSpeak(
       "Haydi denize giderken yanımıza alacağımız şeyleri seçelim.",
     );
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
-    await _voice.speak(_currentRound.introVoice);
+    await _safeSpeak(_currentRound.introVoice);
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
     setState(() {
       _locked = false;
@@ -216,10 +267,10 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
   void _scheduleHint() {
     _hintTimer?.cancel();
 
-    if (_locked || _roundCompleted) return;
+    if (_locked || _roundCompleted || _isDisposed) return;
 
     _hintTimer = Timer(const Duration(seconds: 7), () async {
-      if (!mounted || _locked || _roundCompleted) return;
+      if (!mounted || _locked || _roundCompleted || _isDisposed) return;
 
       final next = _nextMissingCorrectOption();
       if (next == null) return;
@@ -228,9 +279,11 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
         _locked = true;
       });
 
-      await _voice.speak(next.hintVoice ?? "Tekrar bakalım. Doğru olanı seçelim.");
+      await _safeSpeak(
+        next.hintVoice ?? "Tekrar bakalım. Doğru olanı seçelim.",
+      );
 
-      if (!mounted) return;
+      if (!mounted || _isDisposed) return;
 
       setState(() {
         _locked = false;
@@ -254,7 +307,7 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
   }
 
   Future<void> _handleChoice(BeachOption option) async {
-    if (_locked) return;
+    if (_locked || _isDisposed) return;
 
     if (option.isCorrect && _selectedCorrectIds.contains(option.id)) {
       return;
@@ -277,13 +330,13 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
         _selectedCorrectIds.add(option.id);
       });
 
-      await _voice.speak(option.successVoice ?? "Harikasın! Çok güzel seçtin.");
+      await _safeSpeak(option.successVoice ?? "Harikasın! Çok güzel seçtin.");
 
-      if (!mounted) return;
+      if (!mounted || _isDisposed) return;
 
       await Future.delayed(const Duration(milliseconds: 500));
 
-      if (!mounted) return;
+      if (!mounted || _isDisposed) return;
 
       if (_roundCompleted) {
         await _completeRound();
@@ -297,15 +350,15 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
         _scheduleHint();
       }
     } else {
-      await _voice.speak(
+      await _safeSpeak(
         option.wrongVoice ?? "Güzel deneme! Bir daha bakalım.",
       );
 
-      if (!mounted) return;
+      if (!mounted || _isDisposed) return;
 
       await Future.delayed(const Duration(milliseconds: 500));
 
-      if (!mounted) return;
+      if (!mounted || _isDisposed) return;
 
       setState(() {
         _locked = false;
@@ -318,13 +371,13 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
   }
 
   Future<void> _completeRound() async {
-    await _voice.speak(_currentRound.completeVoice);
+    await _safeSpeak(_currentRound.completeVoice);
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
     await Future.delayed(const Duration(milliseconds: 600));
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
     if (_roundIndex == _rounds.length - 1) {
       await _showFinishDialog();
@@ -340,11 +393,11 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
 
     await Future.delayed(const Duration(milliseconds: 500));
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
-    await _voice.speak(_currentRound.introVoice);
+    await _safeSpeak(_currentRound.introVoice);
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
     setState(() {
       _locked = false;
@@ -354,7 +407,7 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
   }
 
   Future<void> _repeatInstruction() async {
-    if (_locked) return;
+    if (_locked || _isDisposed) return;
 
     _hintTimer?.cancel();
 
@@ -364,13 +417,9 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
 
     final next = _nextMissingCorrectOption();
 
-    if (next != null) {
-      await _voice.speak(next.hintVoice ?? _currentRound.introVoice);
-    } else {
-      await _voice.speak(_currentRound.introVoice);
-    }
+    await _safeSpeak(next?.hintVoice ?? _currentRound.introVoice);
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
     setState(() {
       _locked = false;
@@ -380,11 +429,11 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
   }
 
   Future<void> _showFinishDialog() async {
-    await _voice.speak(
+    await _safeSpeak(
       "Tebrikler! Harika seçimler yaptın. Deniz çantamız hazır oldu.",
     );
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
     showDialog(
       context: context,
@@ -416,7 +465,9 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
               child: const Text("Tekrar Oyna"),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
+                await _voice.stop();
+                if (!context.mounted) return;
                 Navigator.pop(dialogContext);
                 Navigator.pop(context);
               },
@@ -433,7 +484,7 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
 
     setState(() {
       _roundIndex = 0;
-      _locked = false;
+      _locked = true;
       _selectedOptionId = null;
       _lastAnswerCorrect = null;
       _selectedCorrectIds.clear();
@@ -441,17 +492,24 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
 
     await Future.delayed(const Duration(milliseconds: 300));
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
 
-    await _voice.speak(_currentRound.introVoice);
+    await _safeSpeak(
+      "Tekrar başlıyoruz. Önce denize giderken giyeceğimiz şeyleri seçelim.",
+    );
 
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
+
+    setState(() {
+      _locked = false;
+    });
 
     _scheduleHint();
   }
 
   @override
   void dispose() {
+    _isDisposed = true;
     _hintTimer?.cancel();
     _voice.stop();
     _voice.dispose();
@@ -508,7 +566,8 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
                           onPressed: () async {
                             _hintTimer?.cancel();
                             await _voice.stop();
-                            if (!mounted) return;
+
+                            if (!context.mounted) return;
                             Navigator.pop(context);
                           },
                           icon: const Icon(
@@ -574,11 +633,21 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          "2 doğru eşyayı seçelim",
+                          _currentRound.roundTitle,
                           textAlign: TextAlign.center,
                           style: const TextStyle(
-                            fontSize: 19,
+                            fontSize: 21,
                             fontWeight: FontWeight.w900,
+                            color: Color(0xFF00695C),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          "$_correctNeeded doğru eşyayı seçelim",
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
                             color: Color(0xFF00796B),
                           ),
                         ),
@@ -640,6 +709,7 @@ class _BeachScenarioPageState extends State<BeachScenarioPage>
                             cardColor: cardColor,
                             borderColor: borderColor,
                             isCorrectSelected: isCorrectSelected,
+                            isLocked: _locked,
                             onTap: () => _handleChoice(option),
                           ),
                         );
@@ -691,6 +761,7 @@ class _ChoiceCard extends StatelessWidget {
   final Color cardColor;
   final Color borderColor;
   final bool isCorrectSelected;
+  final bool isLocked;
   final VoidCallback onTap;
 
   const _ChoiceCard({
@@ -699,6 +770,7 @@ class _ChoiceCard extends StatelessWidget {
     required this.cardColor,
     required this.borderColor,
     required this.isCorrectSelected,
+    required this.isLocked,
     required this.onTap,
   });
 
@@ -710,66 +782,69 @@ class _ChoiceCard extends StatelessWidget {
       elevation: 5,
       child: InkWell(
         borderRadius: BorderRadius.circular(28),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(
-              color: borderColor,
-              width: 5,
-            ),
-          ),
-          child: Stack(
-            children: [
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Image.asset(
-                      image,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const Icon(
-                          Icons.image_not_supported_rounded,
-                          size: 64,
-                          color: Colors.grey,
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    text,
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF374151),
-                    ),
-                  ),
-                ],
+        onTap: isLocked ? null : onTap,
+        child: Opacity(
+          opacity: isLocked && !isCorrectSelected ? 0.85 : 1,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: borderColor,
+                width: 5,
               ),
-              if (isCorrectSelected)
-                Positioned(
-                  top: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF43A047),
-                      shape: BoxShape.circle,
+            ),
+            child: Stack(
+              children: [
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Image.asset(
+                        image,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(
+                            Icons.image_not_supported_rounded,
+                            size: 64,
+                            color: Colors.grey,
+                          );
+                        },
+                      ),
                     ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      color: Colors.white,
-                      size: 22,
+                    const SizedBox(height: 8),
+                    Text(
+                      text,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF374151),
+                      ),
+                    ),
+                  ],
+                ),
+                if (isCorrectSelected)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF43A047),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

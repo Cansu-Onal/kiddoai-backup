@@ -95,6 +95,24 @@ class ChatService {
     final lower = text.toLowerCase();
 
     final Map<String, List<String>> topicKeywords = {
+      "Araçlar": [
+        "araba",
+        "tren",
+        "uçak",
+        "gemi",
+        "otobüs",
+        "kamyon",
+        "araç",
+        "traktör",
+      ],
+      "Müzik": [
+        "şarkı",
+        "müzik",
+        "dans",
+        "söylemek",
+        "piyano",
+        "gitar",
+      ],
       "Hayvanlar": [
         "kedi",
         "köpek",
@@ -118,7 +136,7 @@ class ChatService {
         "astronot",
         "mars",
       ],
-      "Masal / hikaye": [
+      "Masal": [
         "masal",
         "hikaye",
         "prenses",
@@ -127,7 +145,7 @@ class ChatService {
         "kahraman",
         "kitap",
       ],
-      "Çizim / yaratıcılık": [
+      "Çizim": [
         "resim",
         "çizim",
         "boyama",
@@ -136,15 +154,7 @@ class ChatService {
         "renk",
         "kalem",
       ],
-      "Müzik": [
-        "şarkı",
-        "müzik",
-        "dans",
-        "söylemek",
-        "piyano",
-        "gitar",
-      ],
-      "Spor / hareket": [
+      "Spor": [
         "top",
         "futbol",
         "basketbol",
@@ -153,7 +163,7 @@ class ChatService {
         "zıplamak",
         "oynamak",
       ],
-      "Okul / ders": [
+      "Okul": [
         "okul",
         "ödev",
         "ders",
@@ -174,13 +184,6 @@ class ChatService {
         "dede",
         "nine",
       ],
-      "Arkadaş ilişkileri": [
-        "arkadaş",
-        "oyun arkadaşı",
-        "paylaşmak",
-        "küsmek",
-        "barışmak",
-      ],
       "Duygular": [
         "mutlu",
         "üzgün",
@@ -191,22 +194,13 @@ class ChatService {
         "ağlıyorum",
         "yalnız",
       ],
-      "Oyun / ekran": [
+      "Oyun": [
         "oyun",
         "tablet",
         "telefon",
         "bilgisayar",
         "minecraft",
         "roblox",
-      ],
-      "Araçlar": [
-        "araba",
-        "tren",
-        "uçak",
-        "gemi",
-        "otobüs",
-        "kamyon",
-        "araç",
       ],
       "Doğa": [
         "ağaç",
@@ -255,6 +249,16 @@ class ChatService {
     return DateTime(now.year, now.month, now.day);
   }
 
+  static String _safeTopicKey(String topic) {
+    return topic
+        .replaceAll(".", "_")
+        .replaceAll("/", "_")
+        .replaceAll("[", "_")
+        .replaceAll("]", "_")
+        .replaceAll("*", "_")
+        .trim();
+  }
+
   static Future<void> saveMessage({
     required String childMessage,
     required String aiReply,
@@ -281,12 +285,14 @@ class ChatService {
       return;
     }
 
-    final risk = analyzeRisk(child);
+    final risk = analyzeRisk("$child $reply");
     final topic = detectTopic("$child $reply");
+    final safeTopicKey = _safeTopicKey(topic);
+
     final riskLevel = risk["riskLevel"]?.toString() ?? "normal";
     final bool isRisky = riskLevel == "high" || riskLevel == "medium";
 
-    final now = FieldValue.serverTimestamp();
+    final nowServer = FieldValue.serverTimestamp();
     final messageCreatedAt = Timestamp.now();
 
     final messageData = {
@@ -308,34 +314,54 @@ class ChatService {
         .collection("dailyChats")
         .doc(_dateId());
 
-    final baseData = {
+    final updateData = {
       "userId": user.uid,
       "date": Timestamp.fromDate(_todayDateOnly()),
-      "lastUpdatedAt": now,
-      "createdAt": now,
+      "lastUpdatedAt": nowServer,
       "mainTopic": topic,
       "normalSummary": "Bugün çocuk ağırlıklı olarak $topic hakkında konuştu.",
-    };
-
-    final updateData = {
-      ...baseData,
       "totalMessages": FieldValue.increment(1),
       "riskyCount": FieldValue.increment(isRisky ? 1 : 0),
       "topics": FieldValue.arrayUnion([topic]),
       "messages": FieldValue.arrayUnion([messageData]),
-      "hasRisk": isRisky ? true : FieldValue.arrayUnion([]),
-      "topicCounts.$topic": FieldValue.increment(1),
-      if (isRisky) "riskyMessages": FieldValue.arrayUnion([messageData]),
+      "lastMessage": messageData,
+      "lastChildMessage": child,
+      "lastAiReply": reply,
+      "lastMessageAt": messageCreatedAt,
+      "topicCounts.$safeTopicKey": FieldValue.increment(1),
+      if (isRisky) ...{
+        "hasRisk": true,
+        "riskyMessages": FieldValue.arrayUnion([messageData]),
+      },
     };
 
     try {
-      await rootDocRef.set(updateData, SetOptions(merge: true)).timeout(
-            const Duration(seconds: 10),
-          );
+      final rootSnapshot = await rootDocRef.get();
+      final userSnapshot = await userDocRef.get();
 
-      await userDocRef.set(updateData, SetOptions(merge: true)).timeout(
-            const Duration(seconds: 10),
-          );
+      if (!rootSnapshot.exists) {
+        await rootDocRef.set({
+          "createdAt": nowServer,
+          "hasRisk": isRisky,
+          ...updateData,
+        }, SetOptions(merge: true)).timeout(const Duration(seconds: 10));
+      } else {
+        await rootDocRef
+            .set(updateData, SetOptions(merge: true))
+            .timeout(const Duration(seconds: 10));
+      }
+
+      if (!userSnapshot.exists) {
+        await userDocRef.set({
+          "createdAt": nowServer,
+          "hasRisk": isRisky,
+          ...updateData,
+        }, SetOptions(merge: true)).timeout(const Duration(seconds: 10));
+      } else {
+        await userDocRef
+            .set(updateData, SetOptions(merge: true))
+            .timeout(const Duration(seconds: 10));
+      }
 
       print("CHAT SAVE SUCCESS");
     } catch (e, st) {

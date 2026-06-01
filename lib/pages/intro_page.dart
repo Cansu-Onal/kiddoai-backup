@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'register_page.dart';
+import 'welcome_page.dart';
 
 class IntroPage extends StatefulWidget {
   const IntroPage({super.key});
@@ -11,8 +11,10 @@ class IntroPage extends StatefulWidget {
 
 class _IntroPageState extends State<IntroPage> {
   late VideoPlayerController _controller;
+
   bool _isReady = false;
   bool _hasStarted = false;
+  bool _navigated = false;
 
   @override
   void initState() {
@@ -21,8 +23,10 @@ class _IntroPageState extends State<IntroPage> {
     _controller = VideoPlayerController.asset("assets/videos/intro.mp4")
       ..initialize().then((_) {
         if (!mounted) return;
+
         _controller.setLooping(false);
         _controller.setVolume(1.0);
+
         setState(() {
           _isReady = true;
         });
@@ -37,7 +41,7 @@ class _IntroPageState extends State<IntroPage> {
       if (duration != Duration.zero &&
           position >= duration &&
           !_controller.value.isPlaying) {
-        _skip();
+        _goWelcome();
       }
     });
   }
@@ -53,19 +57,23 @@ class _IntroPageState extends State<IntroPage> {
     await _controller.play();
   }
 
+  void _goWelcome() {
+    if (!mounted || _navigated) return;
+
+    _navigated = true;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const WelcomePage(),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
-  }
-
-  void _skip() {
-    if (!mounted) return;
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const RegisterPage()),
-    );
   }
 
   @override
@@ -104,9 +112,9 @@ class _IntroPageState extends State<IntroPage> {
               left: 20,
               right: 20,
               child: Text(
-                "KiddoAI’ye Hoş Geldin\n\n"
+                "KiddoLia’ya Hoş Geldin\n\n"
                 "Bu uygulama, çocukların eğlenerek öğrenmesini sağlar.\n"
-                "Kendi avatarını oluştur ve keşfetmeye başla!",
+                "Keşfetmeye başlamak için devam et!",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white,
@@ -120,7 +128,7 @@ class _IntroPageState extends State<IntroPage> {
             top: 50,
             right: 20,
             child: TextButton(
-              onPressed: _skip,
+              onPressed: _goWelcome,
               child: const Text(
                 "Atla",
                 style: TextStyle(

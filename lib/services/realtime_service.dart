@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:typed_data';
@@ -16,6 +17,9 @@ class RealtimeService {
   bool get stopRequested => _stopRequested;
 
   bool _isSpeaking = false;
+  bool _isSending = false;
+
+  html.AudioElement? _currentAudio;
 
   void Function()? onConnected;
   void Function()? onDisconnected;
@@ -29,6 +33,8 @@ class RealtimeService {
   List _interests = [];
   List _goals = [];
 
+  final List<Map<String, String>> _history = [];
+
   Future connectAndStartChat({
     required String nickname,
     required String personality,
@@ -38,18 +44,18 @@ class RealtimeService {
   }) async {
     try {
       _stopRequested = false;
+      _isSending = false;
+      _isSpeaking = false;
+
       _nickname = nickname;
       _personality = personality;
       _avatarName = avatarName;
 
       _interests = interests;
       _goals = goals;
+      _history.clear();
 
       onStatus?.call("Bağlanıyor...");
-
-      await _resetChatOnServer();
-
-      if (_stopRequested) return;
 
       _isConnected = true;
       onConnected?.call();
@@ -69,10 +75,12 @@ class RealtimeService {
 
   Future sendText(String text) async {
     final cleanText = text.trim();
-    if (cleanText.isEmpty) return;
 
+    if (cleanText.isEmpty) return;
     if (!_isConnected) return;
-    if (_isSpeaking) return;
+    if (_isSpeaking || _isSending) return;
+
+    _isSending = true;
 
     try {
       _stopRequested = false;
@@ -86,21 +94,49 @@ class RealtimeService {
         "text": cleanText,
       });
 
+      _addHistory("child", cleanText);
+
       onStatus?.call("Avatar düşünüyor...");
 
       final reply = await _askServer(cleanText);
 
       if (_stopRequested) return;
 
+      final cleanReply = reply.trim();
+
+      if (cleanReply.isEmpty) {
+        throw Exception("Boş cevap geldi.");
+      }
+
+      _addHistory("assistant", cleanReply);
+
       await speakAvatarText(
-        text: reply,
+        text: cleanReply,
         nickname: nickname,
         personality: personality,
         avatarName: avatarName,
         saveToPanel: true,
       );
-    } catch (_) {
-      onStatus?.call("Cevap gecikti.");
+    } on TimeoutException {
+      onStatus?.call("İstek uzun sürdü, tekrar deneyebilirsin.");
+
+      onEvent?.call({
+        "type": "assistant_text",
+        "text": "Biraz bekledim ama cevap gecikti. Tekrar söyler misin?",
+        "saveToPanel": false,
+      });
+
+      onEvent?.call({
+        "type": "assistant_done",
+        "saveToPanel": false,
+      });
+    } catch (e) {
+      onStatus?.call("Bir sorun oldu, tekrar deneyebilirsin.");
+
+      onEvent?.call({
+        "type": "assistant_error",
+        "message": e.toString(),
+      });
 
       onEvent?.call({
         "type": "assistant_text",
@@ -112,50 +148,87 @@ class RealtimeService {
         "type": "assistant_done",
         "saveToPanel": false,
       });
+    } finally {
+      _isSending = false;
     }
   }
 
-  Future _resetChatOnServer() async {
-    try {
-      await http.post(Uri.parse("$baseUrl/reset-chat"));
-    } catch (_) {}
+  void _addHistory(String role, String text) {
+    final clean = text.trim();
+    if (clean.isEmpty) return;
+
+    _history.add({
+      "role": role,
+      "text": clean,
+    });
+
+    if (_history.length > 10) {
+      _history.removeRange(0, _history.length - 10);
+    }
   }
 
-  Future resetChatOnServer() async {
-    try {
-      await http.post(Uri.parse("$baseUrl/reset-chat"));
-    } catch (_) {}
-  }
+  Future<String> _askServer(String message) async {
+    final response = await http
+        .post(
+          Uri.parse("$baseUrl/chat"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "message": message,
+            "childText": message,
+            "history": _history,
+            "interests": _interests,
+            "goals": _goals,
+            "nickname": _nickname ?? "",
+            "personality": _personality ?? "",
+          }),
+        )
+        .timeout(const Duration(seconds: 90));
 
-  Future _askServer(String message) async {
-    final askRes = await http.post(
-      Uri.parse("$baseUrl/ask"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({
-        "message": message,
-        "interests": _interests,
-        "goals": _goals,
-      }),
-    );
+    if (response.statusCode != 200) {
+      throw Exception("Chat API hata: ${response.statusCode} ${response.body}");
+    }
 
-    final decoded = jsonDecode(askRes.body);
-    return decoded["reply"];
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+
+    final reply = (decoded["reply"] ?? decoded["text"] ?? "").toString();
+
+    if (reply.trim().isEmpty) {
+      throw Exception("Chat API boş cevap döndürdü.");
+    }
+
+    return reply;
   }
 
   Future<Uint8List?> _getTtsAudio(String text) async {
     try {
-      final ttsRes = await http.post(
-        Uri.parse("$baseUrl/tts"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"text": text}),
-      );
+      final cleanText = text.trim();
+      if (cleanText.isEmpty) return null;
 
-      if (!(ttsRes.headers["content-type"] ?? "").contains("audio")) {
+      final ttsRes = await http
+          .post(
+            Uri.parse("$baseUrl/tts"),
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({"text": cleanText}),
+          )
+          .timeout(const Duration(seconds: 60));
+
+      if (ttsRes.statusCode != 200) {
+        throw Exception("TTS API hata: ${ttsRes.statusCode}");
+      }
+
+      final contentType = ttsRes.headers["content-type"] ?? "";
+
+      if (!contentType.contains("audio")) {
         return null;
       }
 
       return ttsRes.bodyBytes;
-    } catch (_) {
+    } catch (e) {
+      onEvent?.call({
+        "type": "assistant_error",
+        "message": "TTS hata: $e",
+      });
+
       return null;
     }
   }
@@ -168,10 +241,22 @@ class RealtimeService {
       ..src = url
       ..autoplay = true;
 
-    await audio.onEnded.first;
+    _currentAudio = audio;
 
-    audio.remove();
-    html.Url.revokeObjectUrl(url);
+    try {
+      await audio.onEnded.first.timeout(const Duration(seconds: 40));
+    } catch (_) {
+      try {
+        audio.pause();
+      } catch (_) {}
+    } finally {
+      audio.remove();
+      html.Url.revokeObjectUrl(url);
+
+      if (_currentAudio == audio) {
+        _currentAudio = null;
+      }
+    }
   }
 
   Future speakAvatarText({
@@ -181,38 +266,62 @@ class RealtimeService {
     required String avatarName,
     bool saveToPanel = true,
   }) async {
+    final cleanText = text.trim();
+    if (cleanText.isEmpty) return;
     if (_isSpeaking) return;
 
     _isSpeaking = true;
 
-    onEvent?.call({
-      "type": "assistant_text",
-      "text": text,
-      "saveToPanel": saveToPanel,
-    });
+    try {
+      onEvent?.call({
+        "type": "assistant_text",
+        "text": cleanText,
+        "saveToPanel": saveToPanel,
+      });
 
-    final audioBytes = await _getTtsAudio(text);
+      onStatus?.call("Avatar sesi hazırlanıyor...");
 
-    if (audioBytes != null) {
-      onEvent?.call({"type": "assistant_audio_start"});
-      await _playAudioBytes(audioBytes);
+      final audioBytes = await _getTtsAudio(cleanText);
+
+      if (_stopRequested) return;
+
+      if (audioBytes != null) {
+        onEvent?.call({"type": "assistant_audio_start"});
+        onStatus?.call("Avatar konuşuyor...");
+        await _playAudioBytes(audioBytes);
+      } else {
+        onStatus?.call("Ses hazırlanamadı.");
+      }
+    } finally {
+      _isSpeaking = false;
+
+      onEvent?.call({
+        "type": "assistant_done",
+        "saveToPanel": saveToPanel,
+      });
+
+      if (_isConnected && !_stopRequested) {
+        onStatus?.call("Sohbet hazır");
+      }
     }
+  }
 
-    _isSpeaking = false;
-
-    onEvent?.call({
-      "type": "assistant_done",
-      "saveToPanel": saveToPanel,
-    });
+  Future resetChatOnServer() async {
+    _history.clear();
   }
 
   Future disconnect() async {
     _stopRequested = true;
     _isSpeaking = false;
+    _isSending = false;
 
     try {
-      // varsa çalan ses durdurulur
+      _currentAudio?.pause();
+      _currentAudio?.remove();
+      _currentAudio = null;
     } catch (_) {}
+
+    _history.clear();
 
     _isConnected = false;
     onDisconnected?.call();

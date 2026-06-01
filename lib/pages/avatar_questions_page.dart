@@ -14,14 +14,16 @@ class AvatarQuestionsPage extends StatefulWidget {
 
 class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
   String? gender;
-  String? personality;
-  String? style;
+
+  String personality = "Neşeli";
+  String style = "Renkli";
+  String boredomLevel = "Bazen";
+
   int? dailyLimitMinutes;
 
   List<String> interests = [];
   List<String> goals = [];
 
-  String? boredomLevel;
   String? attentionSpan;
 
   bool showOtherInterestInput = false;
@@ -38,24 +40,27 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
 
   int currentStep = 0;
 
+  static const String girlNormalAsset = "assets/avatars/normal_kiz.png";
+  static const String girlTalkingAsset = "assets/avatars/konusan_kiz.png";
+  static const String girlBlinkAsset = "assets/avatars/goz_kapali_kiz.png";
+
+  static const String boyNormalAsset = "assets/avatars/boy_normal.png";
+  static const String boyTalkingAsset =
+      "assets/avatars/kiddo_avatar_talking_natural.gif";
+  static const String boyBlinkAsset = "assets/avatars/kiddo_avatar_blink.gif";
+
+  // BURAYA KENDİ ELEVENLABS KIZ VOICE ID'NI YAZ
+  static const String girlVoiceId = "BURAYA_KIZ_VOICE_ID";
+
+  // BURAYA ERKEK VOICE ID VARSA ONU YAZ
+  static const String boyVoiceId = "BURAYA_ERKEK_VOICE_ID";
+
   final List<Map<String, dynamic>> questions = [
     {
       "title": "Avatarın kim olsun?",
       "subtitle": "Bir karakter seç.",
       "key": "gender",
       "options": ["Kız", "Erkek"],
-    },
-    {
-      "title": "Arkadaşın nasıl biri olsun?",
-      "subtitle": "Karakterini seç.",
-      "key": "personality",
-      "options": ["Neşeli", "Sakin"],
-    },
-    {
-      "title": "Avatarın görünümü nasıl olsun?",
-      "subtitle": "Tarzını seç.",
-      "key": "style",
-      "options": ["Renkli", "Sade"],
     },
     {
       "title": "Günlük kullanım süresi ne kadar olsun?",
@@ -95,12 +100,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
       ],
     },
     {
-      "title": "Çocuğunuz çabuk sıkılır mı?",
-      "subtitle": "Avatar konuşma süresini buna göre ayarlayacak.",
-      "key": "boredom",
-      "options": ["Evet", "Bazen", "Hayır"],
-    },
-    {
       "title": "Ortalama dikkat süresi ne kadar?",
       "subtitle": "Avatar konuşmaları bu süreye göre kısa ve eğlenceli tutacak.",
       "key": "attention",
@@ -135,6 +134,7 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
   Future<void> _prepareClickSound() async {
     try {
       await _audioPlayer.setReleaseMode(ReleaseMode.stop);
+      await _audioPlayer.setPlayerMode(PlayerMode.lowLatency);
       await _audioPlayer.setSource(AssetSource('sounds/click.wav'));
     } catch (e) {
       debugPrint("Click preload error: $e");
@@ -155,6 +155,8 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
 
   Future<void> _clickSound() async {
     try {
+      HapticFeedback.selectionClick();
+      await _audioPlayer.stop();
       await _audioPlayer.play(
         AssetSource('sounds/click.wav'),
         mode: PlayerMode.lowLatency,
@@ -187,31 +189,40 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
     );
   }
 
-  String _avatarAssetPath({required String gender, required String style}) {
-    if (gender == "Kız" && style == "Renkli") {
-      return "assets/avatars/kiz_renkli.png";
+  String _avatarAssetPath({required String gender}) {
+    if (gender == "Kız") {
+      return girlNormalAsset;
     }
-    if (gender == "Kız" && style == "Sade") {
-      return "assets/avatars/kiz_sade.png";
+    return boyNormalAsset;
+  }
+
+  String _avatarTalkingAssetPath({required String gender}) {
+    if (gender == "Kız") {
+      return girlTalkingAsset;
     }
-    if (gender == "Erkek" && style == "Renkli") {
-      return "assets/avatars/erkek_renkli.png";
+    return boyTalkingAsset;
+  }
+
+  String _avatarBlinkAssetPath({required String gender}) {
+    if (gender == "Kız") {
+      return girlBlinkAsset;
     }
-    return "assets/avatars/erkek_sade.png";
+    return boyBlinkAsset;
+  }
+
+  String _voiceIdForGender({required String gender}) {
+    if (gender == "Kız") {
+      return girlVoiceId;
+    }
+    return boyVoiceId;
   }
 
   String? _getSelectedValue(String key) {
     switch (key) {
       case "gender":
         return gender;
-      case "personality":
-        return personality;
-      case "style":
-        return style;
       case "dailyLimit":
         return dailyLimitMinutes == null ? null : "$dailyLimitMinutes dk";
-      case "boredom":
-        return boredomLevel;
       case "attention":
         return attentionSpan;
       default:
@@ -225,17 +236,8 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
         case "gender":
           gender = value;
           break;
-        case "personality":
-          personality = value;
-          break;
-        case "style":
-          style = value;
-          break;
         case "dailyLimit":
           dailyLimitMinutes = int.tryParse(value.replaceAll(" dk", ""));
-          break;
-        case "boredom":
-          boredomLevel = value;
           break;
         case "attention":
           attentionSpan = value;
@@ -322,6 +324,8 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
   }
 
   Future<void> _goNext() async {
+    await _clickSound();
+
     if (!_isCurrentStepAnswered()) {
       _snack("Lütfen bu adımı doldur.");
       return;
@@ -338,6 +342,8 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
   }
 
   Future<void> _goBack() async {
+    await _clickSound();
+
     if (currentStep == 0) return;
 
     setState(() {
@@ -349,6 +355,9 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
     required String avatarName,
     required String userName,
     required String avatarAsset,
+    required String avatarTalkingAsset,
+    required String avatarBlinkAsset,
+    required String voiceId,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
 
@@ -366,6 +375,10 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
       "avatarName": avatarName,
       "userName": userName,
       "avatarAsset": avatarAsset,
+      "avatarNormalAsset": avatarAsset,
+      "avatarTalkingAsset": avatarTalkingAsset,
+      "avatarBlinkAsset": avatarBlinkAsset,
+      "voiceId": voiceId,
       "gender": gender,
       "personality": personality,
       "style": style,
@@ -386,12 +399,9 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
     final userName = userNameController.text.trim();
 
     if (gender == null ||
-        personality == null ||
-        style == null ||
         dailyLimitMinutes == null ||
         interests.isEmpty ||
         goals.isEmpty ||
-        boredomLevel == null ||
         attentionSpan == null ||
         avatarName.isEmpty ||
         userName.isEmpty) {
@@ -399,13 +409,19 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
       return;
     }
 
-    final asset = _avatarAssetPath(gender: gender!, style: style!);
+    final asset = _avatarAssetPath(gender: gender!);
+    final talkingAsset = _avatarTalkingAssetPath(gender: gender!);
+    final blinkAsset = _avatarBlinkAssetPath(gender: gender!);
+    final voiceId = _voiceIdForGender(gender: gender!);
 
     try {
       await _saveAvatarProfileToFirebase(
         avatarName: avatarName,
         userName: userName,
         avatarAsset: asset,
+        avatarTalkingAsset: talkingAsset,
+        avatarBlinkAsset: blinkAsset,
+        voiceId: voiceId,
       );
     } catch (e) {
       debugPrint("Avatar profile kayıt hatası: $e");
@@ -422,9 +438,9 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
           avatarAsset: asset,
           nickname: userName,
           gender: gender!,
-          personality: personality!,
+          personality: personality,
           favorite: avatarName,
-          style: style!,
+          style: style,
           dailyLimitMinutes: dailyLimitMinutes!,
         ),
       ),
@@ -434,18 +450,9 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
   String _imageForOption(String label) {
     switch (label) {
       case "Kız":
-        return "assets/icons/kiz.png";
+        return girlNormalAsset;
       case "Erkek":
-        return "assets/icons/erkek.png";
-      case "Neşeli":
-        return "assets/icons/neseli.png";
-      case "Sakin":
-        return "assets/icons/sakin.png";
-      case "Renkli":
-        return "assets/icons/renkli.png";
-      case "Sade":
-        return "assets/icons/sade.png";
-
+        return boyNormalAsset;
       case "Hayvanlar":
         return "assets/icons/hayvanlar.png";
       case "Araçlar":
@@ -466,7 +473,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
         return "assets/icons/bilim.png";
       case "Oyunlar":
         return "assets/icons/oyunlar.png";
-
       case "Dil gelişimi":
         return "assets/icons/english.png";
       case "Sosyal beceriler":
@@ -479,7 +485,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
         return "assets/icons/neseli.png";
       case "Duygusal farkındalık":
         return "assets/icons/chat.png";
-
       case "15 dk":
       case "30 dk":
       case "45 dk":
@@ -489,9 +494,8 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
       case "10-15 dk":
       case "15+ dk":
         return "assets/icons/time.png";
-
       default:
-        return "assets/icons/kiz.png";
+        return girlNormalAsset;
     }
   }
 
@@ -529,12 +533,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
         return Icons.star_rounded;
       case "Duygusal farkındalık":
         return Icons.favorite_rounded;
-      case "Evet":
-        return Icons.sentiment_dissatisfied_rounded;
-      case "Bazen":
-        return Icons.sentiment_neutral_rounded;
-      case "Hayır":
-        return Icons.sentiment_satisfied_rounded;
       default:
         return Icons.check_circle_rounded;
     }
@@ -546,14 +544,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
         return const Color(0xFFEC4899);
       case "Erkek":
         return const Color(0xFF3B82F6);
-      case "Neşeli":
-        return const Color(0xFFF59E0B);
-      case "Sakin":
-        return const Color(0xFF10B981);
-      case "Renkli":
-        return const Color(0xFFFB7185);
-      case "Sade":
-        return const Color(0xFF64748B);
       case "15 dk":
         return const Color(0xFF22C55E);
       case "30 dk":
@@ -585,12 +575,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
       case "Bilim":
       case "Oyunlar":
         return const Color(0xFF22C55E);
-      case "Evet":
-        return const Color(0xFFEF4444);
-      case "Bazen":
-        return const Color(0xFFF59E0B);
-      case "Hayır":
-        return const Color(0xFF10B981);
       default:
         return const Color(0xFF94A3B8);
     }
@@ -675,55 +659,31 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
             color: selected ? activeColor : Colors.white.withOpacity(0.85),
             width: selected ? 2.6 : 1.4,
           ),
-          boxShadow: [
-            BoxShadow(
-              blurRadius: selected ? 14 : 8,
-              offset: const Offset(0, 6),
-              color: selected
-                  ? activeColor.withOpacity(0.22)
-                  : const Color(0x14000000),
-            ),
-          ],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Image.asset(
-                  _imageForOption(label),
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Icon(
-                      _fallbackIconForOption(label),
-                      size: 48,
-                      color: activeColor,
-                    );
-                  },
-                ),
+              child: Image.asset(
+                _imageForOption(label),
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return Icon(
+                    _fallbackIconForOption(label),
+                    size: 48,
+                    color: activeColor,
+                  );
+                },
               ),
             ),
             const SizedBox(height: 10),
             Text(
               label,
               textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: selected ? activeColor : const Color(0xFF334155),
                 fontSize: 15,
                 fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 6),
-            AnimatedOpacity(
-              duration: const Duration(milliseconds: 180),
-              opacity: selected ? 1 : 0,
-              child: Icon(
-                Icons.check_circle_rounded,
-                color: activeColor,
-                size: 22,
               ),
             ),
           ],
@@ -737,38 +697,21 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
     required String hintText,
     required IconData icon,
   }) {
-    final hasText = controller.text.trim().isNotEmpty;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: hasText
-            ? Colors.white.withOpacity(0.95)
-            : Colors.white.withOpacity(0.88),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: hasText ? const Color(0xFFF59E0B) : Colors.white,
-          width: hasText ? 2.2 : 1.4,
-        ),
+    return TextField(
+      controller: controller,
+      onChanged: (_) => setState(() {}),
+      style: const TextStyle(
+        color: Color(0xFF3B2F00),
+        fontWeight: FontWeight.w700,
       ),
-      child: TextField(
-        controller: controller,
-        onChanged: (_) {
-          setState(() {});
-        },
-        style: const TextStyle(
-          color: Color(0xFF3B2F00),
-          fontWeight: FontWeight.w700,
-        ),
-        decoration: InputDecoration(
-          hintText: hintText,
-          hintStyle: const TextStyle(color: Color(0xFF8A6A00)),
-          border: InputBorder.none,
-          prefixIcon: Icon(
-            icon,
-            color: const Color(0xFFF59E0B),
-          ),
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.9),
+        hintText: hintText,
+        prefixIcon: Icon(icon, color: const Color(0xFFF59E0B)),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: BorderSide.none,
         ),
       ),
     );
@@ -785,51 +728,18 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
     return Column(
       children: [
         const SizedBox(height: 16),
-        Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: () {
-              setState(() {
-                if (keyName == "interests") {
-                  showOtherInterestInput = !showOtherInterestInput;
-                } else {
-                  showOtherGoalInput = !showOtherGoalInput;
-                }
-              });
-            },
-            child: Container(
-              height: 52,
-              decoration: BoxDecoration(
-                color: isOpen
-                    ? const Color(0xFFF59E0B)
-                    : Colors.white.withOpacity(0.94),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: const Color(0xFFF59E0B),
-                  width: 1.6,
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    isOpen ? Icons.close_rounded : Icons.edit_rounded,
-                    color: isOpen ? Colors.white : const Color(0xFF3B2F00),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    isOpen ? "Kapat" : "Yoksa yaz",
-                    style: TextStyle(
-                      color: isOpen ? Colors.white : const Color(0xFF3B2F00),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        FilledButton(
+          onPressed: () async {
+            await _clickSound();
+            setState(() {
+              if (keyName == "interests") {
+                showOtherInterestInput = !showOtherInterestInput;
+              } else {
+                showOtherGoalInput = !showOtherGoalInput;
+              }
+            });
+          },
+          child: Text(isOpen ? "Kapat" : "Yoksa yaz"),
         ),
         if (isOpen) ...[
           const SizedBox(height: 14),
@@ -840,22 +750,11 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
           ),
           const SizedBox(height: 10),
           FilledButton(
-            onPressed: () => _addOtherValue(keyName),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(48),
-              backgroundColor: const Color(0xFFF59E0B),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            child: const Text(
-              "Ekle",
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 16,
-              ),
-            ),
+            onPressed: () async {
+              await _clickSound();
+              _addOtherValue(keyName);
+            },
+            child: const Text("Ekle"),
           ),
         ],
       ],
@@ -887,9 +786,8 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
 
             return _buildOptionCard(
               label: option,
-              selected: isMulti
-                  ? selectedList.contains(option)
-                  : selectedValue == option,
+              selected:
+                  isMulti ? selectedList.contains(option) : selectedValue == option,
               onTap: () {
                 if (isMulti) {
                   _toggleMultiValue(key, option);
@@ -940,7 +838,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
     final subtitle = current["subtitle"] as String;
     final key = current["key"] as String;
     final options = List<String>.from(current["options"] as List);
-
     final selectedValue = _getSelectedValue(key);
 
     return Column(
@@ -974,22 +871,7 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
         Expanded(
           child: OutlinedButton(
             onPressed: currentStep == 0 ? null : _goBack,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(54),
-              side: const BorderSide(color: Colors.white, width: 1.6),
-              backgroundColor: Colors.white.withOpacity(0.14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-            ),
-            child: const Text(
-              "Geri",
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-                color: Colors.white,
-              ),
-            ),
+            child: const Text("Geri"),
           ),
         ),
         const SizedBox(width: 12),
@@ -997,21 +879,7 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
           flex: 2,
           child: FilledButton(
             onPressed: _goNext,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size.fromHeight(54),
-              backgroundColor: const Color(0xFFF59E0B),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-            ),
-            child: Text(
-              isLast ? "Avatarı Oluştur" : "Devam Et",
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
+            child: Text(isLast ? "Avatarı Oluştur" : "Devam Et"),
           ),
         ),
       ],
@@ -1025,19 +893,10 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
     return Scaffold(
       backgroundColor: background,
       appBar: AppBar(
-        title: const Text(
-          "Avatar Soruları",
-          style: TextStyle(
-            color: Color(0xFF3B2F00),
-            fontWeight: FontWeight.w800,
-          ),
-        ),
+        title: const Text("Avatar Soruları"),
         centerTitle: true,
         backgroundColor: background,
         elevation: 0,
-        iconTheme: const IconThemeData(
-          color: Color(0xFF3B2F00),
-        ),
       ),
       body: SafeArea(
         child: Center(
@@ -1057,16 +916,7 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
                     ),
                     Positioned.fill(
                       child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.white.withOpacity(0.18),
-                              Colors.black.withOpacity(0.22),
-                            ],
-                          ),
-                        ),
+                        color: Colors.black.withOpacity(0.18),
                       ),
                     ),
                     Container(
@@ -1077,8 +927,6 @@ class _AvatarQuestionsPageState extends State<AvatarQuestionsPage> {
                           const SizedBox(height: 22),
                           Expanded(
                             child: SingleChildScrollView(
-                              keyboardDismissBehavior:
-                                  ScrollViewKeyboardDismissBehavior.onDrag,
                               padding: const EdgeInsets.only(bottom: 110),
                               child: _buildCurrentStep(),
                             ),

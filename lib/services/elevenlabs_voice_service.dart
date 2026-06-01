@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 class ElevenLabsVoiceService {
   final AudioPlayer _player = AudioPlayer();
 
+  bool _disposed = false;
+
   String get baseUrl {
     if (kIsWeb) {
       return "http://localhost:3000";
@@ -15,7 +17,9 @@ class ElevenLabsVoiceService {
     return "http://10.0.2.2:3000";
   }
 
-  Future<void> speak(String text) async {
+  Future<void> speak(String text, {String gender = "Erkek"}) async {
+    if (_disposed) return;
+
     final cleanText = text.trim();
     if (cleanText.isEmpty) return;
 
@@ -32,9 +36,12 @@ class ElevenLabsVoiceService {
             },
             body: jsonEncode({
               "text": cleanText,
+              "gender": gender,
             }),
           )
-          .timeout(const Duration(seconds: 20));
+          .timeout(const Duration(seconds: 30));
+
+      if (_disposed) return;
 
       if (response.statusCode != 200) {
         debugPrint("TTS HTTP hata: ${response.statusCode}");
@@ -61,7 +68,9 @@ class ElevenLabsVoiceService {
 
       await completer.future.timeout(
         const Duration(seconds: 45),
-        onTimeout: () {},
+        onTimeout: () async {
+          await _player.stop();
+        },
       );
     } catch (e) {
       debugPrint("ElevenLabs ses hatası: $e");
@@ -71,10 +80,20 @@ class ElevenLabsVoiceService {
   }
 
   Future<void> stop() async {
-    await _player.stop();
+    if (_disposed) return;
+
+    try {
+      await _player.stop();
+    } catch (_) {}
   }
 
   Future<void> dispose() async {
-    await _player.dispose();
+    if (_disposed) return;
+    _disposed = true;
+
+    try {
+      await _player.stop();
+      await _player.dispose();
+    } catch (_) {}
   }
 }

@@ -1,10 +1,11 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
-import 'paint_page.dart';
+import 'parent_saved_paintings_store.dart';
 
 class DrawPage extends StatefulWidget {
   const DrawPage({super.key});
@@ -38,6 +39,12 @@ class _DrawPageState extends State<DrawPage> {
     Colors.grey,
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    ParentSavedPaintingsStore.startAutoCleanup();
+  }
+
   Offset _getLocalPosition(Offset globalPosition) {
     final RenderBox box =
         _canvasKey.currentContext!.findRenderObject() as RenderBox;
@@ -46,6 +53,7 @@ class _DrawPageState extends State<DrawPage> {
 
   void _showMessage(String msg) {
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg)),
@@ -98,6 +106,16 @@ class _DrawPageState extends State<DrawPage> {
     });
   }
 
+  String _formatDateTime(DateTime dateTime) {
+    final day = dateTime.day.toString().padLeft(2, '0');
+    final month = dateTime.month.toString().padLeft(2, '0');
+    final year = dateTime.year.toString();
+    final hour = dateTime.hour.toString().padLeft(2, '0');
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+
+    return "$day.$month.$year $hour:$minute";
+  }
+
   Future<void> _saveDrawingToParentPanel() async {
     if (_points.whereType<DrawPoint>().isEmpty) {
       _showMessage("Önce bir çizim yapmalısın.");
@@ -111,10 +129,13 @@ class _DrawPageState extends State<DrawPage> {
     });
 
     try {
+      await ParentSavedPaintingsStore.cleanupExpired();
+
       final boundary = _canvasKey.currentContext!.findRenderObject()
           as RenderRepaintBoundary;
 
       final ui.Image image = await boundary.toImage(pixelRatio: 3);
+
       final ByteData? byteData = await image.toByteData(
         format: ui.ImageByteFormat.png,
       );
@@ -124,28 +145,17 @@ class _DrawPageState extends State<DrawPage> {
       }
 
       final Uint8List imageBytes = byteData.buffer.asUint8List();
+      final String imageBase64 = base64Encode(imageBytes);
 
       final now = DateTime.now();
-      final title =
-          "Serbest çizim ${now.day.toString().padLeft(2, '0')}.${now.month.toString().padLeft(2, '0')}.${now.year}";
+      final dateText = _formatDateTime(now);
 
-      final current = List<ParentSavedPainting>.from(
-        ParentSavedPaintingsStore.paintings.value,
+      await ParentSavedPaintingsStore.save(
+        title: "Serbest çizim - $dateText",
+        imageBase64: imageBase64,
       );
 
-      current.insert(
-        0,
-        ParentSavedPainting(
-  id: DateTime.now().millisecondsSinceEpoch.toString(),
-  title: title,
-  imageBytes: imageBytes,
-  savedAt: DateTime.now(),
-),
-      );
-
-      ParentSavedPaintingsStore.paintings.value = current;
-
-      _showMessage("Çizim ebeveyn paneline kaydedildi ✅");
+      _showMessage("Çizim ebeveyn paneline kaydedildi ✅ $dateText");
     } catch (e) {
       _showMessage("Çizim kaydedilemedi: $e");
     } finally {
@@ -155,6 +165,12 @@ class _DrawPageState extends State<DrawPage> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    ParentSavedPaintingsStore.stopAutoCleanup();
+    super.dispose();
   }
 
   @override

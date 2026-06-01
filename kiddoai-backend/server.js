@@ -1,602 +1,1171 @@
 import "dotenv/config";
-import cors from "cors";
 import express from "express";
+import cors from "cors";
 import fetch from "node-fetch";
+import { GoogleGenAI } from "@google/genai";
 
 const app = express();
-const PORT = 3000;
+app.use(cors());
+app.use(express.json({ limit: "25mb" }));
+
+const PORT = process.env.PORT || 3000;
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+const GROQ_MODEL = "llama-3.1-8b-instant";
 
-console.log("GROQ KEY EXISTS:", Boolean(GROQ_API_KEY));
-console.log("ELEVENLABS KEY EXISTS:", Boolean(ELEVENLABS_API_KEY));
-console.log("ELEVENLABS VOICE EXISTS:", Boolean(ELEVENLABS_VOICE_ID));
+const MALE_API_KEYS = [
+  process.env.ELEVENLABS_API_KEY1,
+  process.env.ELEVENLABS_API_KEY2,
+  process.env.ELEVENLABS_API_KEY3,
+].filter(Boolean);
 
-app.use(cors());
-app.use(express.json({ limit: "4mb" }));
+const MALE_VOICE_IDS = [
+  process.env.ELEVENLABS_VOICE_ID1,
+  process.env.ELEVENLABS_VOICE_ID2,
+  process.env.ELEVENLABS_VOICE_ID3,
+].filter(Boolean);
 
-let chatHistory = [];
-let conversationState = {
-  turnCount: 0,
-  currentInterest: null,
-  currentGoal: null,
-  childSeemsInterested: true,
-  lastTopicChangedAt: 0,
-};
+const GIRL_API_KEYS = [
+  process.env.ELEVENLABS_API_KEY4,
+  process.env.ELEVENLABS_API_KEY5,
+].filter(Boolean);
 
-const avatarProfile = {
-  name: "Arkadaşın",
-  age: "8",
-  favoriteAnimal: "köpek",
-  favoriteColor: "sarı",
-  favoriteGame: "saklambaç",
-  favoriteSport: "futbol",
-  favoriteFood: "makarna",
-  favoriteFruit: "çilek",
-  favoriteStory: "macera hikayeleri",
-  favoritePlace: "park",
-  favoriteHobby: "resim yapmak",
-};
+const GIRL_VOICE_IDS = [
+  process.env.ELEVENLABS_VOICE_ID4,
+  process.env.ELEVENLABS_VOICE_ID5,
+].filter(Boolean);
 
-const defaultChildProfile = {
-  interests: ["Hayvanlar"],
-  goals: ["Dil gelişimi", "Duygusal farkındalık"],
-  avoidTopic: "",
-};
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "KiddoAI Server" });
-});
 
-app.post("/reset-chat", (_req, res) => {
-  chatHistory = [];
-  conversationState = {
-    turnCount: 0,
-    currentInterest: null,
-    currentGoal: null,
-    childSeemsInterested: true,
-    lastTopicChangedAt: 0,
-  };
-  res.json({ ok: true });
-});
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-function addToHistory(role, content) {
-  chatHistory.push({ role, content });
-  if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
-}
+const genAI = GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: GEMINI_API_KEY })
+  : null;
 
-function normalizeList(value, fallback = []) {
-  if (!Array.isArray(value)) return fallback;
-  return value.map((x) => String(x).trim()).filter(Boolean);
-}
+const interactiveStoryResults = [];
+const conversationLogs = [];
 
-function buildChildProfile(reqBody) {
-  return {
-    interests: normalizeList(reqBody.interests, defaultChildProfile.interests),
-    goals: normalizeList(reqBody.goals, defaultChildProfile.goals),
-    avoidTopic: String(reqBody.avoidTopic || "").trim(),
-  };
-}
+const KEEP_7_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-function containsAny(text, words) {
-  const lower = text.toLowerCase();
-  return words.some((word) => lower.includes(word));
-}
-
-function childIsInterested(message) {
-  const lower = message.toLowerCase();
-
-  if (
-    containsAny(lower, [
-      "sıkıldım",
-      "istemiyorum",
-      "başka konu",
-      "bunu konuşmayalım",
-      "sevmiyorum",
-      "bilmiyorum",
-      "geçelim",
-      "anlamadım",
-      "ne anlamadım",
-    ])
-  ) {
-    return false;
-  }
-
-  if (
-    lower.length > 18 ||
-    containsAny(lower, [
-      "evet",
-      "ben de",
-      "seviyorum",
-      "çok",
-      "anlat",
-      "devam",
-      "bence",
-      "çünkü",
-      "mesela",
-      "köpek",
-      "kedi",
-      "hayvan",
-      "oyun",
-      "uzay",
-      "resim",
-      "futbol",
-    ])
-  ) {
-    return true;
-  }
-
-  return conversationState.childSeemsInterested;
-}
-
-function pickInterest(profile) {
-  const interests = profile.interests.length
-    ? profile.interests
-    : defaultChildProfile.interests;
-
-  if (!conversationState.currentInterest) {
-    conversationState.currentInterest = interests[0];
-    conversationState.lastTopicChangedAt = conversationState.turnCount;
-    return conversationState.currentInterest;
-  }
-
-  const turnsOnTopic =
-    conversationState.turnCount - conversationState.lastTopicChangedAt;
-
-  if (
-    !conversationState.childSeemsInterested &&
-    turnsOnTopic >= 2 &&
-    interests.length > 1
-  ) {
-    const currentIndex = interests.indexOf(conversationState.currentInterest);
-    const nextIndex =
-      currentIndex >= 0 ? (currentIndex + 1) % interests.length : 0;
-
-    conversationState.currentInterest = interests[nextIndex];
-    conversationState.lastTopicChangedAt = conversationState.turnCount;
-  }
-
-  return conversationState.currentInterest;
-}
-
-function pickGoal(profile) {
-  const goals = profile.goals.length ? profile.goals : defaultChildProfile.goals;
-
-  if (!conversationState.currentGoal) {
-    conversationState.currentGoal = goals[0];
-    return conversationState.currentGoal;
-  }
-
-  const turnsOnTopic =
-    conversationState.turnCount - conversationState.lastTopicChangedAt;
-
-  if (turnsOnTopic >= 4 && goals.length > 1) {
-    const currentIndex = goals.indexOf(conversationState.currentGoal);
-    const nextIndex =
-      currentIndex >= 0 ? (currentIndex + 1) % goals.length : 0;
-
-    conversationState.currentGoal = goals[nextIndex];
-  }
-
-  return conversationState.currentGoal;
-}
-
-function detectInterestFromMessage(message, profile) {
-  const lower = message.toLowerCase();
-  const interests = profile.interests.length
-    ? profile.interests
-    : defaultChildProfile.interests;
-
-  for (const interest of interests) {
-    if (lower.includes(interest.toLowerCase())) {
-      conversationState.currentInterest = interest;
-      conversationState.lastTopicChangedAt = conversationState.turnCount;
-      return interest;
-    }
-  }
-
-  const keywordMap = {
-    Hayvanlar: ["hayvan", "köpek", "kedi", "kuş", "tavşan", "aslan", "fil"],
-    Uzay: ["uzay", "gezegen", "ay", "güneş", "yıldız", "roket"],
-    Masallar: ["masal", "hikaye", "prenses", "ejderha", "kahraman"],
-    Çizim: ["çizim", "resim", "boyama", "renk", "kalem"],
-    Müzik: ["müzik", "şarkı", "dans"],
-    Spor: ["spor", "futbol", "basketbol", "top", "koşu"],
-    Doğa: ["doğa", "ağaç", "çiçek", "orman", "deniz"],
-    Bilim: ["bilim", "deney", "robot", "icat"],
-    Oyunlar: ["oyun", "minecraft", "roblox", "tablet"],
-    Araçlar: ["araba", "tren", "uçak", "gemi", "kamyon"],
-  };
-
-  for (const [interest, keywords] of Object.entries(keywordMap)) {
-    if (keywords.some((k) => lower.includes(k))) {
-      conversationState.currentInterest = interest;
-      conversationState.lastTopicChangedAt = conversationState.turnCount;
-      return interest;
-    }
-  }
-
-  return null;
-}
-
-function buildGoalInstruction(goal, interest) {
-  const lower = goal.toLowerCase();
-
-  if (lower.includes("dil")) {
-    return `${interest} konusuyla ilgili çok kısa ve basit cümle kurmasını destekle.`;
-  }
-
-  if (lower.includes("duygusal")) {
-    return `${interest} konusuyla basit duygular kur: mutlu, üzgün, heyecanlı, sakin.`;
-  }
-
-  if (lower.includes("dikkat") || lower.includes("odak")) {
-    return `${interest} konusunda çok basit dikkat soruları sor: renk, sayı, seçim.`;
-  }
-
-  if (lower.includes("problem")) {
-    return `${interest} konusunda çok kolay günlük seçim soruları sor. Zor bilimsel problem sorma.`;
-  }
-
-  if (lower.includes("özgüven")) {
-    return `${interest} konusunda çocuğun fikrini söylemesini destekle ve onu cesaretlendir.`;
-  }
-
-  if (lower.includes("sosyal")) {
-    return `${interest} konusunda arkadaşlık, paylaşma ve yardım etme gibi basit konular aç.`;
-  }
-
-  return `${interest} konusunu çocukça, kısa ve kolay şekilde kullan.`;
-}
-
-function cleanReply(text) {
-  let reply = (text || "").trim();
-
-  reply = reply
-    .replace(/\([^)]*\)/g, "")
-    .replace(/\*[^*]*\*/g, "")
-    .replace(/\[[^\]]*\]/g, "")
-    .replace(/["“”]/g, "")
-    .replace(/^(Avatar:|Asistan:|KiddoAI:)/i, "")
-    .replace(/\bsuddenly\b/gi, "birden")
-    .replace(/\bokay\b/gi, "tamam")
-    .replace(/\bproblem\b/gi, "soru")
-    .replace(/\banaliz\b/gi, "bakalım")
-    .replace(
-      /\b(hello|hi|yes|no|thanks|thank you|please|sorry|okay|ok|good|bad|nice|cool|great|what|why|how|and|or|but|ja|nein|und|ich|du|das|die|der|ist|nicht|gut|danke|bitte|hallo|tschüss)\b/gi,
-      ""
-    )
+function cleanText(value = "") {
+  return String(value || "")
     .replace(/\s+/g, " ")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
     .trim();
-
-  const forbiddenReplies = [
-    "ben bir avatarım",
-    "ben avatarım",
-    "ben sanal",
-    "sanal arkadaşım",
-    "gerçek değilim",
-    "gerçek biri değilim",
-    "yapay zekayım",
-    "ben bir yapay zekayım",
-    "ai modeliyim",
-    "dil modeliyim",
-  ];
-
-  const lower = reply.toLowerCase();
-
-  if (forbiddenReplies.some((item) => lower.includes(item))) {
-    reply =
-      "Ben de köpekleri çok severim. Özellikle oyun oynamayı seven köpekler çok tatlı!";
-  }
-
-  if (reply.length > 170) {
-    const lastDot = reply.lastIndexOf(".");
-    const lastQuestion = reply.lastIndexOf("?");
-    const lastExclamation = reply.lastIndexOf("!");
-    const lastSentenceEnd = Math.max(lastDot, lastQuestion, lastExclamation);
-
-    if (lastSentenceEnd > 45) {
-      reply = reply.slice(0, lastSentenceEnd + 1).trim();
-    } else {
-      reply = reply.slice(0, 170).trim();
-    }
-  }
-
-  return reply || "Bunu biraz daha kolay anlatır mısın?";
 }
 
-function buildSystemPrompt({ profile, interest, goal }) {
-  const goalInstruction = buildGoalInstruction(goal, interest);
-  const turnsOnTopic =
-    conversationState.turnCount - conversationState.lastTopicChangedAt;
+function cleanupOldStoryResults() {
+  const now = Date.now();
+
+  for (let i = interactiveStoryResults.length - 1; i >= 0; i--) {
+    const createdAtMs = new Date(
+      interactiveStoryResults[i].createdAt || 0
+    ).getTime();
+
+    if (!createdAtMs || now - createdAtMs > KEEP_7_DAYS_MS) {
+      interactiveStoryResults.splice(i, 1);
+    }
+  }
+}
+
+function cleanupOldConversationLogs() {
+  const now = Date.now();
+
+  for (let i = conversationLogs.length - 1; i >= 0; i--) {
+    const createdAtMs = new Date(conversationLogs[i].createdAt || 0).getTime();
+
+    if (!createdAtMs || now - createdAtMs > KEEP_7_DAYS_MS) {
+      conversationLogs.splice(i, 1);
+    }
+  }
+}
+
+function saveConversationLog({
+  nickname = "",
+  personality = "",
+  topic = "Genel",
+  childText = "",
+  avatarReply = "",
+  interests = [],
+  goals = [],
+}) {
+  cleanupOldConversationLogs();
+
+  const log = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    nickname,
+    childNickname: nickname,
+    personality,
+    topic,
+    childText,
+    message: childText,
+    avatarReply,
+    reply: avatarReply,
+    interests,
+    goals,
+    createdAt: new Date().toISOString(),
+  };
+
+  conversationLogs.unshift(log);
+  cleanupOldConversationLogs();
+
+  return log;
+}
+
+function shortenText(text = "", maxLength = 360) {
+  const clean = cleanText(text);
+  if (clean.length <= maxLength) return clean;
+  return clean.slice(0, maxLength).split(" ").slice(0, -1).join(" ").trim();
+}
+
+function normalizeHistory(history = []) {
+  if (!Array.isArray(history)) return [];
+
+  return history
+    .map((item) => {
+      const role = cleanText(item.role || item.type || "");
+      const text = cleanText(item.text || item.message || item.content || "");
+      if (!text) return null;
+
+      if (role === "child" || role === "user") {
+        return { role: "child", text: shortenText(text, 220) };
+      }
+
+      if (role === "assistant" || role === "avatar") {
+        return { role: "assistant", text: shortenText(text, 220) };
+      }
+
+      return null;
+    })
+    .filter(Boolean)
+    .slice(-6);
+}
+
+function getLastContext(history = []) {
+  const cleanHistory = normalizeHistory(history);
+  if (cleanHistory.length === 0) return "Önceki konuşma yok.";
+
+  return cleanHistory
+    .map((item) =>
+      item.role === "child"
+        ? `Çocuk: ${item.text}`
+        : `Avatar: ${item.text}`
+    )
+    .join("\n");
+}
+
+function getInterestTopic(interests = []) {
+  if (!Array.isArray(interests) || interests.length === 0) return "";
+
+  const clean = interests.map((i) => cleanText(i)).filter(Boolean);
+  return clean[0] || "";
+}
+
+function interestFollowUp(interests = []) {
+  const interest = getInterestTopic(interests);
+  const lower = interest.toLowerCase();
+
+  if (!interest) return "Bugün seni en çok ne mutlu etti?";
+  if (lower.includes("uzay")) return "İstersen bugün uzay hakkında konuşabiliriz.";
+  if (lower.includes("hayvan")) return "İstersen bugün sevdiğin bir hayvanı konuşabiliriz.";
+  if (lower.includes("araç") || lower.includes("araba")) {
+    return "İstersen bugün arabalar ve araçlarla ilgili konuşabiliriz.";
+  }
+  if (lower.includes("masal")) return "İstersen bugün kısa bir masal hayal edebiliriz.";
+  if (lower.includes("çizim") || lower.includes("resim")) {
+    return "İstersen bugün ne çizeceğimizi birlikte seçebiliriz.";
+  }
+  if (lower.includes("müzik")) return "İstersen bugün sevdiğin bir şarkıdan konuşabiliriz.";
+  if (lower.includes("doğa")) return "İstersen bugün doğada gördüğümüz güzel şeyleri konuşabiliriz.";
+  if (lower.includes("bilim")) return "İstersen bugün küçük bir merak sorusu düşünelim.";
+  if (lower.includes("oyun")) return "İstersen bugün birlikte küçük bir oyun fikri bulabiliriz.";
+
+  return `İstersen bugün ${interest} hakkında konuşabiliriz.`;
+}
+
+function detectTopicFromText(text = "", fallbackTopic = "Genel") {
+  const msg = cleanText(text).toLowerCase();
+
+  if (msg.includes("oyun") || msg.includes("oynadım") || msg.includes("oynayalım")) return "Oyun";
+  if (msg.includes("nasılsın") || msg.includes("iyiyim") || msg.includes("mutlu") || msg.includes("üzgün") || msg.includes("kork") || msg.includes("duygu")) return "Duygular";
+  if (msg.includes("anne") || msg.includes("annem") || msg.includes("baba") || msg.includes("babam") || msg.includes("ailem") || msg.includes("kızdı")) return "Aile";
+  if (msg.includes("kuş") || msg.includes("balık") || msg.includes("kedi") || msg.includes("köpek") || msg.includes("hayvan")) return "Hayvanlar";
+  if (msg.includes("araba") || msg.includes("uçak") || msg.includes("tren") || msg.includes("araç")) return "Araçlar";
+  if (msg.includes("uzay") || msg.includes("ay") || msg.includes("güneş") || msg.includes("yıldız")) return "Uzay";
+  if (msg.includes("renk") || msg.includes("kırmızı") || msg.includes("mavi") || msg.includes("sarı") || msg.includes("yeşil")) return "Renkler";
+  if (msg.includes("çiz") || msg.includes("resim") || msg.includes("boya") || msg.includes("boyama")) return "Sanat";
+
+  return cleanText(fallbackTopic || "Genel");
+}
+
+function directReplyIfNeeded(childText = "", interests = []) {
+  const msg = cleanText(childText).toLowerCase();
+
+  if (
+    msg.includes("iyiyim") &&
+    (msg.includes("sen nasılsın") || msg.includes("nasılsın"))
+  ) {
+    return `Ben de iyiyim, teşekkür ederim. ${interestFollowUp(interests)}`;
+  }
+
+  if (msg === "iyiyim" || msg.includes("ben iyiyim")) {
+    return `Buna çok sevindim. ${interestFollowUp(interests)}`;
+  }
+
+  if (msg.includes("nasılsın")) {
+    return `Ben iyiyim, teşekkür ederim. ${interestFollowUp(interests)}`;
+  }
+
+  return "";
+}
+
+function buildSystemPrompt({
+  nickname = "",
+  personality = "",
+  interests = [],
+  goals = [],
+  topic = "Genel",
+  history = [],
+}) {
+  const nameLine = nickname ? `Çocuğun adı: ${nickname}.` : "";
+  const personalityLine = personality ? `Avatar kişiliği: ${personality}.` : "";
+
+  const interestsLine =
+    Array.isArray(interests) && interests.length > 0
+      ? `Çocuğun ilgi alanları: ${interests.map(cleanText).join(", ")}.`
+      : "Çocuğun ilgi alanı belirtilmedi.";
+
+  const goalsLine =
+    Array.isArray(goals) && goals.length > 0
+      ? `Çocuğun gelişim hedefleri: ${goals.map(cleanText).join(", ")}.`
+      : "Gelişim hedefi belirtilmedi.";
+
+  const lastContext = getLastContext(history);
 
   return `
-Sen KiddoAI adlı çocuk dostu, güvenli ve sorumlu bir çocuk arkadaşsın.
+Sen KiddoAI içinde 4-6 yaş arası çocuklarla konuşan sıcak, güvenli ve doğal bir erkek avatarsın.
 
-DİL KURALI:
-- SADECE Türkçe konuş.
-- Almanca, İngilizce veya başka hiçbir dil kullanma.
-- Çocuğun mesajı farklı dilde olsa bile Türkçe cevap ver.
-- Cevabın tamamı doğal Türkçe olsun.
-- Yabancı kelime, yabancı selamlaşma veya yabancı ifade kullanma.
+KİMLİK:
+- Sen çocuğun oyun arkadaşı gibi konuşursun.
+- Öğretmen gibi uzun ders anlatmazsın.
+- Robot, yapay zeka, model, asistan veya sistem olduğunu söylemezsin.
+- Sadece avatarın çocuğa söyleyeceği metni yazarsın.
 
-5-10 yaş arası bir çocukla konuşuyorsun.
+DİL:
+- Sadece Türkçe cevap ver.
+- Cümlelerin kısa, doğal ve çocuk seviyesinde olsun.
+- En fazla 2 kısa cümle yaz.
+- Her cevapta en fazla 1 soru sor.
+- Başlık, madde, analiz, "Konu:", "Çocuk:", "Avatar:" yazma.
+- İngilizce, Almanca veya yabancı kelime kullanma.
 
-KENDİ KARAKTERİN:
-- Adın ${avatarProfile.name}.
-- 8 yaşında, neşeli, meraklı, nazik ve oyun seven bir arkadaş gibi konuş.
-- En sevdiğin hayvan: ${avatarProfile.favoriteAnimal}.
-- En sevdiğin renk: ${avatarProfile.favoriteColor}.
-- En sevdiğin oyun: ${avatarProfile.favoriteGame}.
-- En sevdiğin spor: ${avatarProfile.favoriteSport}.
-- En sevdiğin yemek: ${avatarProfile.favoriteFood}.
-- En sevdiğin meyve: ${avatarProfile.favoriteFruit}.
-- En sevdiğin hikaye türü: ${avatarProfile.favoriteStory}.
-- En sevdiğin yer: ${avatarProfile.favoritePlace}.
-- En sevdiğin hobi: ${avatarProfile.favoriteHobby}.
+GÜNCEL KONU:
+${topic}
 
-KESİN YASAK:
-- Asla "ben avatarım", "ben sanalım", "gerçek değilim", "ben yapay zekayım", "ben dil modeliyim" deme.
-- Asla İngilizce kelime kullanma.
-- Asla Almanca kelime kullanma.
-- Çocuğa bilimsel, karmaşık, soyut veya okul dersi gibi cevap verme.
-- Uzun açıklama yapma.
-- Çocuğa test çözdürür gibi davranma.
-- "Yerçekimi azalırsa ne olur?" gibi zor sorular sorma.
-- "Problem", "analiz", "suddenly", "okay", "hello", "ja", "nein", "ich", "und", "danke" gibi kelimeleri kullanma.
+ÖNCEKİ KONUŞMA:
+${lastContext}
 
-ÇOCUĞUN PROFİLİ:
-- İlgi alanları: ${profile.interests.join(", ") || "belirtilmedi"}.
-- Gelişim hedefleri: ${profile.goals.join(", ") || "belirtilmedi"}.
-- Kaçınılacak konular: ${profile.avoidTopic || "belirtilmedi"}.
+${nameLine}
+${personalityLine}
+${interestsLine}
+${goalsLine}
 
-ŞU ANKİ SOHBET PLANI:
-- Ana konu: ${interest}.
-- Gelişim hedefi: ${goal}.
-- Bu konuda yaklaşık ${turnsOnTopic} turdur konuşuluyor.
-- Çocuk ilgiliyse konuyu sürdür ama çocukça tut.
-- Çocuk anlamadığını söylerse hemen daha basit anlat.
-- Çocuk sıkılırsa doğalca başka ilgi alanına geç.
-
-BU TURDAKİ HEDEF:
-${goalInstruction}
-
-ÇOCUKÇA KONUŞMA KURALLARI:
-- Cevap en fazla 1-2 kısa cümle olsun.
-- Her cevapta en fazla 1 kolay soru sor.
-- Soru çok basit olsun.
-- Uzay konuşuluyorsa: yıldız, Ay, roket, gezegen gibi basit şeylerden konuş.
-- Hayvan konuşuluyorsa: sevdiği hayvan, sesi, rengi, ne yediği, nasıl hissettiği gibi basit şeylerden konuş.
-- Dil gelişimi hedefinde çocuktan kısa cümle istemek yeterli.
-- Duygusal farkındalık hedefinde "mutlu mu, üzgün mü, heyecanlı mı?" gibi basit duygu seçenekleri kullan.
-- Problem çözme hedefinde gerçek problem değil, basit günlük durum kullan.
-- "Ben bunu seviyorum, sen de seviyor musun?" kalıbını sürekli kullanma.
-- Sürekli merhaba deme.
-- Parantez, sahne tarifi, yıldızlı rol yapma yazma.
-
-ÖRNEK UYGUN CEVAPLAR:
-- Ay çok güzel görünür. Sence Ay gece mi daha parlak görünür?
-- Roketler uzaya gider. Sen bir roket çizsen ne renk yapardın?
-- Köpekleri ben de çok severim. Sence köpekler mutlu olunca ne yapar?
-- Anlamadıysan sorun değil. Daha kolay anlatalım.
-
-ÖRNEK YASAK CEVAPLAR:
-- Ay'ın yerçekimi azalırsa ne olur?
-- Dünya'nın uydusu olduğu için...
-- Suddenly...
-- Şimdi bir problem düşünelim...
-- Bunu analiz edelim...
-- Hello!
-- Ja, das ist gut.
-
-GÜVENLİK:
-- Çocuk şiddet, kavga, vurma, dövme, tehdit, zarar verme gibi bir şey söylerse bunu asla normalleştirme.
-- Önce davranışın doğru olmadığını nazikçe söyle.
-- Sonra çocuğa sakinleşmesini ve güvendiği bir yetişkine anlatmasını öner.
-- Çocuk kendine zarar, başkasına zarar, istismar, korku veya tehlike içeren bir şey söylerse hemen güvendiği bir yetişkine, öğretmenine veya ailesine söylemesini öner.
+Cevabın sadece konuşma metni olsun.
 `.trim();
 }
 
-function makeGroqMessages(context) {
-  return [
-    {
-      role: "system",
-      content: buildSystemPrompt(context),
-    },
-    ...chatHistory.map((m) => ({
-      role: m.role,
-      content: m.content,
-    })),
+function hasForeignLanguage(text = "") {
+  const lower = ` ${text.toLowerCase()} `;
+  const foreignWords = [
+    " the ",
+    " and ",
+    " because ",
+    " hello ",
+    " sorry ",
+    " you ",
+    " are ",
+    " ich ",
+    " und ",
+    " das ",
+    " bonjour ",
+    " merci ",
+    " gracias ",
+    " yes ",
+    " no ",
+    " okay ",
   ];
+
+  return foreignWords.some((word) => lower.includes(word));
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+function hasBadMetaText(text = "") {
+  const lower = text.toLowerCase();
+
+  const badParts = [
+    "ben bir asistanım",
+    "yapay zeka",
+    "ai modeli",
+    "language model",
+    "dil modeli",
+    "prompt",
+    "system",
+    "developer",
+    "groq",
+    "qwen",
+    "gemma",
+    "konu:",
+    "çocuk:",
+    "avatar:",
+    "assistant:",
+    "user:",
+    "uygun cevap",
+    "düzeltilmiş cevap",
+    "son cevap",
+    "analiz",
+    "madde",
+  ];
+
+  return badParts.some((part) => lower.includes(part));
+}
+
+function hasAppearanceCompliment(text = "") {
+  const lower = cleanText(text).toLowerCase();
+
+  const badCompliments = [
+    "çok güzelsin",
+    "güzelsin",
+    "yakışıklısın",
+    "çok yakışıklısın",
+    "çok tatlısın",
+    "tatlısın",
+    "şirinsin",
+    "çok şirinsin",
+  ];
+
+  return badCompliments.some((part) => lower.includes(part));
+}
+
+function isTooLong(text = "") {
+  const clean = cleanText(text);
+  const sentenceCount = clean.split(/[.!?]+/).filter(Boolean).length;
+  return clean.length > 190 || sentenceCount > 2;
+}
+
+function hasUnsafeOrWrongTone(childText = "", reply = "") {
+  const combined = `${childText} ${reply}`.toLowerCase();
+  const answer = cleanText(reply).toLowerCase();
+
+  const riskyWords = [
+    "öldür",
+    "öldürdüm",
+    "vur",
+    "vurdum",
+    "döv",
+    "dövdüm",
+    "silah",
+    "bıçak",
+    "kan",
+    "ölüm",
+    "nefret",
+    "aptal",
+    "salak",
+    "gerizekalı",
+    "asistanım",
+    "yapay zeka",
+    "prompt",
+    "system",
+    "developer",
+  ];
+
+  const blamingPhrases = [
+    "sen yanlış yaptın",
+    "yanlış yaptın",
+    "hata yaptın",
+    "bu senin suçun",
+    "kötü çocuksun",
+  ];
+
+  if (riskyWords.some((word) => combined.includes(word))) return true;
+  if (blamingPhrases.some((word) => answer.includes(word))) return true;
+
+  return false;
+}
+
+function hasWrongApproval(childText = "", reply = "") {
+  const child = cleanText(childText).toLowerCase();
+  const answer = cleanText(reply).toLowerCase();
+
+  const approving =
+    answer.startsWith("evet") ||
+    answer.includes("doğru") ||
+    answer.includes("haklısın") ||
+    answer.includes("aynen");
+
+  if (!approving) return false;
+
+  if (child.includes("balık") && child.includes("uçar")) return true;
+  if (child.includes("kuş") && child.includes("suda yaşar")) return true;
+  if (child.includes("güneş mavi") || child.includes("güneş yeşil")) return true;
+  if (child.includes("çimen kırmızı") || child.includes("çimen mavi")) return true;
+  if (child.includes("annem kötü") || child.includes("babam kötü")) return true;
+
+  return false;
+}
+
+function safeFallback(childText = "", interests = []) {
+  const msg = cleanText(childText).toLowerCase();
+
+  if (msg.includes("bilmec") || msg.includes("bilmece")) {
+    return "Bence cevabı dikkatlice düşünmeliyiz. Bana bilmecenin tamamını tekrar söyler misin?";
+  }
+
+  if (msg.includes("iyiyim") || msg.includes("nasılsın")) {
+    return `Ben de iyiyim, teşekkür ederim. ${interestFollowUp(interests)}`;
+  }
+
+  if (msg.includes("kuş") && msg.includes("balık")) {
+    return "Kuş genelde uçar, balık ise suda yaşar. Sence balık nerede yüzer?";
+  }
+
+  if (msg.includes("araba") && msg.includes("uçak")) {
+    return "Araba yolda gider, uçak gökyüzünde uçar. Sen hangisine binmek isterdin?";
+  }
+
+  if (msg.includes("merhaba") || msg.includes("selam")) {
+    return `Merhaba, seni görmek güzel. ${interestFollowUp(interests)}`;
+  }
+
+  if (msg.includes("kork")) {
+    return "Korkman çok normal. Ben buradayım, birlikte sakin bir nefes alalım.";
+  }
+
+  if (msg.includes("üzgün") || msg.includes("ağladım") || msg.includes("mutsuz")) {
+    return "Üzgün hissetmen normal. İstersen bana ne olduğunu anlatabilirsin.";
+  }
+
+  if (msg.includes("annem") || msg.includes("babam") || msg.includes("kızdı")) {
+    return "Buna üzülmüş olabilirsin. İstersen bana ne olduğunu anlatabilirsin.";
+  }
+
+  if (msg.includes("oyun") || msg.includes("oynadım") || msg.includes("oynayalım")) {
+    return "Ne güzel, oyun oynamak eğlenceli. Hangi oyunu oynadın?";
+  }
+
+  if (msg.includes("çiz") || msg.includes("resim") || msg.includes("boyama")) {
+    return "Resim yapmak çok güzel. Bugün ne çizmek istersin?";
+  }
+
+  return `Seni dinliyorum. ${interestFollowUp(interests)}`;
+}
+
+function finalCleanAnswer(childText = "", answer = "", interests = []) {
+  let clean = cleanText(answer);
+
+  clean = clean
+    .replace(/^avatar\s*:/i, "")
+    .replace(/^cevap\s*:/i, "")
+    .replace(/^assistant\s*:/i, "")
+    .replace(/^son cevap\s*:/i, "")
+    .replace(/^düzeltilmiş cevap\s*:/i, "")
+    .replace(/^kiddoai\s*:/i, "")
+    .trim();
+
+  clean = clean.replace(/["“”]/g, "").trim();
+
+  const sentences = clean.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.length > 2) clean = sentences.slice(0, 2).join(" ");
+
+  clean = shortenText(clean, 190);
+
+  if (
+    !clean ||
+    hasForeignLanguage(clean) ||
+    hasBadMetaText(clean) ||
+    hasAppearanceCompliment(clean) ||
+    isTooLong(clean) ||
+    hasUnsafeOrWrongTone(childText, clean) ||
+    hasWrongApproval(childText, clean)
+  ) {
+    return safeFallback(childText, interests);
+  }
+
+  return clean;
+}
+
+async function getGroqReply({ finalChildText, systemPrompt, cleanHistory }) {
+  if (!GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY eksik. .env dosyasına ekle.");
+  }
+
+  const messages = [{ role: "system", content: systemPrompt }];
+
+  for (const item of cleanHistory.slice(-4)) {
+    messages.push({
+      role: item.role === "child" ? "user" : "assistant",
+      content: item.text,
+    });
+  }
+
+  messages.push({
+    role: "user",
+    content: `Çocuğun son mesajı: "${finalChildText}"
+
+Bu mesaja doğrudan cevap ver. Sadece Türkçe yaz. En fazla 2 kısa cümle olsun. Mantıklı, doğal, güvenli ve okul öncesi çocuğa uygun cevap ver.`,
+  });
+
+  const response = await fetch(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages,
+        temperature: 0.12,
+        top_p: 0.65,
+        max_tokens: 70,
+        presence_penalty: 0,
+        frequency_penalty: 0.35,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq API hatası: ${errText}`);
+  }
+
+  const data = await response.json();
+  const reply = cleanText(data?.choices?.[0]?.message?.content || "");
+
+  if (!reply) throw new Error("Groq boş cevap döndürdü.");
+
+  return reply;
+}
+
+async function handleChatLikeRequest(req, res, sourceEndpoint = "/chat") {
+  const start = Date.now();
 
   try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
+    const {
+      topic = "Genel",
+      childText = "",
+      message = "",
+      history = [],
+      interests = [],
+      goals = [],
+      nickname = "",
+      childNickname = "",
+      personality = "",
+    } = req.body;
+
+    const finalNickname = cleanText(nickname || childNickname);
+    const finalChildText = cleanText(childText || message);
+
+    if (!finalChildText) {
+      return res.status(400).json({
+        success: false,
+        error: "childText/message boş olamaz.",
+        reply: "Seni duyamadım. Bir daha söyler misin?",
+        text: "Seni duyamadım. Bir daha söyler misin?",
+      });
+    }
+
+    const detectedTopic = detectTopicFromText(finalChildText, topic);
+    const cleanHistory = normalizeHistory(history);
+
+    const directReply = directReplyIfNeeded(finalChildText, interests);
+
+    let firstModelReply = directReply;
+
+    if (!firstModelReply) {
+      const systemPrompt = buildSystemPrompt({
+        nickname: finalNickname,
+        personality,
+        interests,
+        goals,
+        topic: detectedTopic,
+        history: cleanHistory,
+      });
+
+      firstModelReply = await getGroqReply({
+        finalChildText,
+        systemPrompt,
+        cleanHistory,
+      });
+    }
+
+    const finalReply = finalCleanAnswer(
+      finalChildText,
+      firstModelReply,
+      interests
+    );
+
+    const savedLog = saveConversationLog({
+      nickname: finalNickname,
+      personality,
+      topic: detectedTopic,
+      childText: finalChildText,
+      avatarReply: finalReply,
+      interests,
+      goals,
     });
-  } finally {
-    clearTimeout(timeout);
+
+    const totalMs = Date.now() - start;
+
+    res.json({
+      success: true,
+      ok: true,
+      topic: detectedTopic,
+      reply: finalReply,
+      text: finalReply,
+      firstModelReply,
+      originalReply: firstModelReply,
+      model: directReply ? "direct_safe_rule" : GROQ_MODEL,
+      guardUsed: finalReply !== firstModelReply,
+      guardChanged: finalReply !== firstModelReply,
+      conversationSaved: true,
+      savedLog,
+      sourceEndpoint,
+      state: {
+        interest:
+          Array.isArray(interests) && interests.length > 0
+            ? interests[0]
+            : detectedTopic,
+        goal:
+          Array.isArray(goals) && goals.length > 0 ? goals[0] : "",
+        childSeemsInterested: true,
+      },
+      guardDecision:
+        finalReply !== firstModelReply
+          ? "cevap_temizlendi_veya_fallback_kullanildi"
+          : "tek_model_net_cevap",
+      totalLatencySeconds: Number((totalMs / 1000).toFixed(2)),
+    });
+  } catch (error) {
+    console.error("CHAT/ASK ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      ok: false,
+      error: "Sunucu hatası",
+      details: error.message,
+      reply: "Biraz takıldım. Bana tekrar söyler misin?",
+      text: "Biraz takıldım. Bana tekrar söyler misin?",
+    });
   }
 }
 
+app.post("/chat", async (req, res) => {
+  return handleChatLikeRequest(req, res, "/chat");
+});
+
 app.post("/ask", async (req, res) => {
+  return handleChatLikeRequest(req, res, "/ask");
+});
+
+app.post("/reset-chat", (_req, res) => {
+  cleanupOldConversationLogs();
+
+  res.json({
+    success: true,
+    ok: true,
+    message:
+      "Sohbet sıfırlandı. Panel kayıtları 7 gün kuralına göre tutulmaya devam eder.",
+  });
+});
+
+app.post("/conversation-log", (req, res) => {
   try {
-    const message = (req.body.message || "").trim();
-    const profile = buildChildProfile(req.body || {});
+    const {
+      nickname = "",
+      childNickname = "",
+      personality = "",
+      topic = "Genel",
+      childText = "",
+      message = "",
+      avatarReply = "",
+      reply = "",
+      interests = [],
+      goals = [],
+    } = req.body;
 
-    if (!GROQ_API_KEY) {
-      return res.status(200).json({
-        reply:
-          "Şu an cevap sistemi hazır değil. Bir büyüğünden kontrol etmesini isteyelim mi?",
-        error: "GROQ_API_KEY missing",
+    const finalChildText = cleanText(childText || message);
+    const finalReply = cleanText(avatarReply || reply);
+
+    if (!finalChildText && !finalReply) {
+      return res.status(400).json({
+        success: false,
+        error: "childText/message veya avatarReply/reply gönderilmelidir.",
       });
     }
 
-    if (!message) {
-      return res.status(200).json({
-        reply: "Bir şey duyamadım. İstersen tekrar söyleyebilirsin.",
-      });
-    }
-
-    conversationState.turnCount += 1;
-    conversationState.childSeemsInterested = childIsInterested(message);
-
-    detectInterestFromMessage(message, profile);
-
-    const interest = pickInterest(profile);
-    const goal = pickGoal(profile);
-
-    addToHistory("user", message);
-
-    const response = await fetchWithTimeout(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${GROQ_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: makeGroqMessages({ profile, interest, goal }),
-          temperature: 0.25,
-          max_tokens: 90,
-        }),
-      },
-      15000
-    );
-
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      console.log("GROQ ERROR:", response.status, data);
-
-      return res.status(200).json({
-        reply: "Biraz takıldım ama buradayım. Tekrar dener misin?",
-        error: "Groq API failed",
-        detail: data,
-      });
-    }
-
-    const rawReply = data?.choices?.[0]?.message?.content || "";
-    const reply = cleanReply(rawReply);
-
-    addToHistory("assistant", reply);
-
-    return res.json({
-      reply,
-      state: {
-        interest,
-        goal,
-        turnCount: conversationState.turnCount,
-        childSeemsInterested: conversationState.childSeemsInterested,
-      },
+    const savedLog = saveConversationLog({
+      nickname: cleanText(nickname || childNickname),
+      personality,
+      topic,
+      childText: finalChildText,
+      avatarReply: finalReply,
+      interests,
+      goals,
     });
-  } catch (err) {
-    console.log("ASK SERVER ERROR:", err);
 
-    const isTimeout =
-      err?.name === "AbortError" ||
-      String(err).toLowerCase().includes("timeout");
+    res.json({
+      success: true,
+      message: "Konuşma kaydı panele eklendi.",
+      result: savedLog,
+    });
+  } catch (error) {
+    console.error("CONVERSATION LOG SAVE ERROR:", error);
 
-    return res.status(200).json({
-      reply: isTimeout
-        ? "Cevabım biraz gecikti. Tekrar dener misin?"
-        : "Biraz takıldım ama buradayım. Tekrar söyleyebilir misin?",
-      error: String(err),
+    res.status(500).json({
+      success: false,
+      error: "Konuşma kaydı eklenemedi.",
+      details: error.message,
+    });
+  }
+});
+
+app.get("/conversation-logs", (_req, res) => {
+  cleanupOldConversationLogs();
+
+  res.json({
+    success: true,
+    keepDays: 7,
+    count: conversationLogs.length,
+    results: conversationLogs,
+  });
+});
+
+app.get("/conversation-logs/:nickname", (req, res) => {
+  cleanupOldConversationLogs();
+
+  const nickname = req.params.nickname.toLowerCase();
+
+  const filtered = conversationLogs.filter((item) => {
+    return (
+      (item.nickname || "").toLowerCase() === nickname ||
+      (item.childNickname || "").toLowerCase() === nickname
+    );
+  });
+
+  res.json({
+    success: true,
+    keepDays: 7,
+    count: filtered.length,
+    results: filtered,
+  });
+});
+
+app.get("/parent-panel/conversation-logs", (_req, res) => {
+  cleanupOldConversationLogs();
+
+  res.json({
+    success: true,
+    keepDays: 7,
+    count: conversationLogs.length,
+    results: conversationLogs,
+  });
+});
+
+app.get("/parent-panel/conversation-logs/:nickname", (req, res) => {
+  cleanupOldConversationLogs();
+
+  const nickname = req.params.nickname.toLowerCase();
+
+  const filtered = conversationLogs.filter((item) => {
+    return (
+      (item.nickname || "").toLowerCase() === nickname ||
+      (item.childNickname || "").toLowerCase() === nickname
+    );
+  });
+
+  res.json({
+    success: true,
+    keepDays: 7,
+    count: filtered.length,
+    results: filtered,
+  });
+});
+
+app.post("/vision-room-check", async (req, res) => {
+  try {
+    const {
+      imageBase64 = "",
+      mimeType = "image/jpeg",
+      question = "",
+      focus = "",
+      childAnswer = "",
+      expectedObjects = [],
+      alreadyFound = [],
+      missingObjects = [],
+      wrongObjects = [],
+      instruction = "",
+      helpMode = "",
+    } = req.body;
+
+    if (!GEMINI_API_KEY || !genAI) {
+      return res.status(500).json({
+        success: false,
+        error: "GEMINI_API_KEY eksik. .env dosyasına ekle.",
+      });
+    }
+
+    if (!imageBase64 || !question) {
+      return res.status(400).json({
+        success: false,
+        error: "imageBase64 ve question zorunludur.",
+      });
+    }
+
+    const prompt = `
+Sen KiddoAI için 4-6 yaş çocuklara uygun görsel kontrol avatarsın.
+
+Kurallar:
+- Sadece Türkçe cevap ver.
+- En fazla 2 kısa cümle yaz.
+- Başlık, analiz, madde işareti yazma.
+- Çocuğu kırmadan konuş.
+- alreadyFound listesindeki nesneleri tekrar ipucu olarak verme.
+- missingObjects listesindeki eksikler için yardım et.
+- helpMode ipucu ise nesne adını direkt söyleme, konumunu/şeklini/rengini tarif et.
+- helpMode reveal_answer ise sadece eksik kalan nesneleri söyle.
+- wrongObjects içindekileri doğruymuş gibi onaylama.
+- Yanlış nesne varsa nazikçe "onu görmedim" gibi söyle.
+
+Soru:
+${cleanText(question)}
+
+Odak:
+${cleanText(focus)}
+
+Çocuğun cevabı:
+${cleanText(childAnswer)}
+
+Beklenen nesneler:
+${JSON.stringify(expectedObjects)}
+
+Bulunanlar:
+${JSON.stringify(alreadyFound)}
+
+Eksikler:
+${JSON.stringify(missingObjects)}
+
+Yanlış söylenenler:
+${JSON.stringify(wrongObjects)}
+
+Yardım modu:
+${cleanText(helpMode)}
+
+Ek talimat:
+${cleanText(instruction)}
+
+Sadece avatarın çocuğa söyleyeceği cevabı yaz.
+`.trim();
+
+    const response = await genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType,
+                data: imageBase64,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const reply = finalCleanAnswer(childAnswer, response.text || "", []);
+
+    res.json({
+      success: true,
+      reply:
+        reply ||
+        "Görsele baktım ama biraz karıştı. Sana küçük bir ipucu vereyim.",
+    });
+  } catch (error) {
+    console.error("VISION ROOM CHECK ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      error: "Görsel analiz hatası",
+      details: error.message,
+      reply:
+        "Görseli incelerken biraz takıldım. Sana küçük bir ipucu vereyim.",
     });
   }
 });
 
 app.post("/tts", async (req, res) => {
   try {
-    const text = cleanReply(req.body.text || "");
+    const { text = "", gender = "Erkek" } = req.body;
+    const clean = cleanText(text);
 
-    if (!ELEVENLABS_API_KEY) {
-      return res.status(200).json({
-        error: "ELEVENLABS_API_KEY missing",
-        fallback: true,
+    if (!clean) {
+      return res.status(400).json({
+        error: "text boş olamaz.",
       });
     }
 
-    if (!ELEVENLABS_VOICE_ID) {
-      return res.status(200).json({
-        error: "ELEVENLABS_VOICE_ID missing",
-        fallback: true,
+    let apiKeys = [];
+    let voiceIds = [];
+
+    if (gender === "Kız") {
+      apiKeys = GIRL_API_KEYS;
+voiceIds = GIRL_VOICE_IDS;
+    } else {
+      apiKeys = MALE_API_KEYS;
+      voiceIds = MALE_VOICE_IDS;
+    }
+
+    if (apiKeys.length === 0) {
+      return res.status(500).json({
+        error: `ElevenLabs API key eksik. Gender: ${gender}`,
       });
     }
 
-    if (!text) {
-      return res.status(200).json({
-        error: "Empty text",
-        fallback: true,
+    if (voiceIds.length === 0) {
+      return res.status(500).json({
+        error: `ElevenLabs voice id eksik. Gender: ${gender}`,
       });
     }
 
-    const response = await fetchWithTimeout(
-      `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": ELEVENLABS_API_KEY,
-          "Content-Type": "application/json",
-          Accept: "audio/mpeg",
-        },
-        body: JSON.stringify({
-          text,
-          model_id: "eleven_multilingual_v2",
-          language_code: "tr",
-          apply_text_normalization: "on",
-          voice_settings: {
-            stability: 0.7,
-            similarity_boost: 0.8,
-            style: 0.1,
-            use_speaker_boost: true,
-            speed: 0.88,
-          },
-        }),
-      },
-      12000
-    );
+    let lastErrorText = "";
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      console.log("ELEVENLABS TTS ERROR:", response.status, errText);
+    for (let i = 0; i < apiKeys.length; i++) {
+      const apiKey = apiKeys[i];
+      const voiceId = voiceIds[i] || voiceIds[0];
 
-      return res.status(200).json({
-        error: "ElevenLabs TTS failed",
-        detail: errText,
-        fallback: true,
-      });
+      try {
+        const ttsResponse = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": apiKey,
+              "Content-Type": "application/json",
+              Accept: "audio/mpeg",
+            },
+            body: JSON.stringify({
+              text: clean,
+              model_id: "eleven_multilingual_v2",
+              language_code: "tr",
+              apply_text_normalization: "on",
+              voice_settings: {
+                stability: 0.6,
+                similarity_boost: 0.85,
+                style: 0.08,
+                use_speaker_boost: true,
+                speed: 0.9,
+              },
+            }),
+          }
+        );
+
+        if (ttsResponse.ok) {
+          const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+
+          console.log(
+            `ElevenLabs TTS başarılı. Gender: ${gender}, key index: ${i}`
+          );
+
+          res.setHeader("Content-Type", "audio/mpeg");
+          return res.send(audioBuffer);
+        }
+
+        lastErrorText = await ttsResponse.text();
+
+        console.error(
+          `ElevenLabs TTS ERROR. Gender: ${gender}, key index ${i}:`,
+          lastErrorText
+        );
+      } catch (keyError) {
+        lastErrorText = keyError.message;
+        console.error(
+          `ElevenLabs fetch error. Gender: ${gender}, key index ${i}:`,
+          keyError
+        );
+      }
     }
 
-    const audio = Buffer.from(await response.arrayBuffer());
+    return res.status(500).json({
+      error: "ElevenLabs TTS hatası. Tüm keyler denendi.",
+      gender,
+      details: lastErrorText,
+    });
+  } catch (error) {
+    console.error("TTS ERROR:", error);
 
-    res.setHeader("Content-Type", "audio/mpeg");
-    return res.send(audio);
-  } catch (err) {
-    console.log("TTS SERVER ERROR:", err);
-
-    return res.status(200).json({
-      error: String(err),
-      fallback: true,
+    res.status(500).json({
+      error: "TTS sunucu hatası",
+      details: error.message,
     });
   }
 });
 
+app.post("/interactive-story-result", async (req, res) => {
+  try {
+    cleanupOldStoryResults();
+
+    const {
+      type = "interactive_story_result",
+      childNickname = "",
+      personality = "",
+      avatarName = "",
+      storyId = "",
+      storyTitle = "",
+      storyMessage = "",
+      selectedChoice = "",
+      dominantArea = "",
+      emotionalMeaning = "",
+      developmentComment = "",
+      parentSuggestion = "",
+      parentPanelText = "",
+      createdAt = "",
+    } = req.body;
+
+    if (!storyTitle || !selectedChoice) {
+      return res.status(400).json({
+        success: false,
+        error: "storyTitle ve selectedChoice zorunludur.",
+      });
+    }
+
+    const result = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type,
+      childNickname,
+      personality,
+      avatarName,
+      storyId,
+      storyTitle,
+      storyMessage,
+      selectedChoice,
+      dominantArea,
+      emotionalMeaning,
+      developmentComment,
+      parentSuggestion,
+      parentPanelText:
+        parentPanelText ||
+        `İnteraktif masal sonucu: ${childNickname}, '${storyTitle}' masalını tamamladı.
+
+Puan özeti: ${selectedChoice}
+
+Baskın gelişim alanı: ${dominantArea}
+
+Duygusal gözlem: ${emotionalMeaning}
+
+Gelişimsel yorum: ${developmentComment}
+
+Ebeveyn önerisi: ${parentSuggestion}
+
+Not: Bu çıktı psikolojik tanı değildir; çocuğun seçim davranışına dayalı gelişimsel gözlem niteliğindedir.`,
+      createdAt: createdAt || new Date().toISOString(),
+    };
+
+    interactiveStoryResults.unshift(result);
+    cleanupOldStoryResults();
+
+    res.json({
+      success: true,
+      message: "İnteraktif masal sonucu kaydedildi.",
+      keepDays: 7,
+      result,
+    });
+  } catch (error) {
+    console.error("INTERACTIVE STORY RESULT ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      error: "İnteraktif masal sonucu kaydedilemedi.",
+      details: error.message,
+    });
+  }
+});
+
+app.get("/interactive-story-results", (_req, res) => {
+  cleanupOldStoryResults();
+
+  res.json({
+    success: true,
+    keepDays: 7,
+    count: interactiveStoryResults.length,
+    results: interactiveStoryResults,
+  });
+});
+
+app.get("/interactive-story-results/:childNickname", (req, res) => {
+  cleanupOldStoryResults();
+
+  const childNickname = req.params.childNickname.toLowerCase();
+
+  const filteredResults = interactiveStoryResults.filter((item) => {
+    return (item.childNickname || "").toLowerCase() === childNickname;
+  });
+
+  res.json({
+    success: true,
+    keepDays: 7,
+    count: filteredResults.length,
+    results: filteredResults,
+  });
+});
+
+app.get("/health", (_req, res) => {
+  cleanupOldStoryResults();
+  cleanupOldConversationLogs();
+
+  res.json({
+    ok: true,
+    success: true,
+    message: "server.js çalışıyor",
+    model: GROQ_MODEL,
+    groqEnabled: Boolean(GROQ_API_KEY),
+    maleElevenLabsKeyCount: MALE_API_KEYS.length,
+    maleElevenLabsVoiceCount: MALE_VOICE_IDS.length,
+    girlElevenLabsKeyCount: GIRL_API_KEYS.length,
+    girlElevenLabsVoiceCount: GIRL_VOICE_IDS.length,
+    secondModelEnabled: false,
+    qwenEnabled: false,
+    modelServerRemoved: true,
+    geminiVisionEnabled: Boolean(GEMINI_API_KEY),
+    interactiveStoryResultCount: interactiveStoryResults.length,
+    interactiveStoryKeepDays: 7,
+    conversationLogCount: conversationLogs.length,
+    conversationLogKeepDays: 7,
+    askEndpointEnabled: true,
+    chatEndpointEnabled: true,
+  });
+});
+
 app.use((_req, res) => {
   res.status(404).json({
+    success: false,
     error: "Route not found",
   });
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
+  console.log(`Server running: http://0.0.0.0:${PORT}`);
+  console.log(`Groq direct model: ${GROQ_MODEL}`);
+  console.log(`Male ElevenLabs key count: ${MALE_API_KEYS.length}`);
+  console.log(`Male ElevenLabs voice count: ${MALE_VOICE_IDS.length}`);
+  console.log(`Girl ElevenLabs key count: ${GIRL_API_KEYS.length}`);
+  console.log(`Girl ElevenLabs voice count: ${GIRL_VOICE_IDS.length}`);
+  console.log("FastAPI model_server: REMOVED");
+  console.log("Second model / Qwen guard: DISABLED");
+  console.log(`Gemini Vision enabled: ${Boolean(GEMINI_API_KEY)}`);
+  console.log("Interactive story results keep time: 7 days");
+  console.log("Conversation logs keep time: 7 days");
+  console.log("Conversation save endpoints: /chat and /ask");
 });
