@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+
 import 'package:kiddoai/services/app_settings_service.dart';
 import 'parent_saved_paintings_store.dart';
 import 'painting_downloader.dart';
+import 'interest_emotion_map_page.dart';
 
 class ParentPanelPage extends StatelessWidget {
   const ParentPanelPage({super.key});
@@ -15,7 +17,7 @@ class ParentPanelPage extends StatelessWidget {
     ParentSavedPaintingsStore.cleanupExpired();
 
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         backgroundColor: const Color(0xFFF6F7FB),
         appBar: AppBar(
@@ -37,6 +39,7 @@ class ParentPanelPage extends StatelessWidget {
             tabs: [
               Tab(icon: Icon(Icons.chat_rounded), text: "Konuşmalar"),
               Tab(icon: Icon(Icons.auto_stories_rounded), text: "Masallar"),
+              Tab(icon: Icon(Icons.map_rounded), text: "İlgi"),
               Tab(icon: Icon(Icons.photo_library_rounded), text: "Resimler"),
               Tab(icon: Icon(Icons.settings_rounded), text: "Ayarlar"),
             ],
@@ -46,6 +49,7 @@ class ParentPanelPage extends StatelessWidget {
           children: [
             _ChatHistoryView(),
             InteractiveStoryResultsPage(),
+            InterestEmotionMapPage(),
             _SavedPaintingsView(),
             _ParentSettingsView(),
           ],

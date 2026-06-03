@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'avatar_questions_page.dart';
+import 'home_page.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -84,6 +85,21 @@ class _RegisterPageState extends State<RegisterPage> {
     return approved;
   }
 
+  Future<void> _goHomePage() async {
+    if (!mounted) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const HomePage(
+          nickname: "Arkadaşım",
+          personality: "Neşeli",
+          dailyLimitMinutes: 30,
+        ),
+      ),
+    );
+  }
+
   Future<void> _goAvatarQuestions() async {
     if (!mounted) return;
 
@@ -125,7 +141,7 @@ class _RegisterPageState extends State<RegisterPage> {
     );
 
     _showSnack("Giriş başarılı.");
-    await _goAvatarQuestions();
+    await _goHomePage();
   }
 
   Future<void> _handleRegister({

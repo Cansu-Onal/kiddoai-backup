@@ -385,32 +385,54 @@ class _InteractiveStoryPageState extends State<InteractiveStoryPage> {
     final empathy = scores["empathy"] ?? 0;
     final friendship = scores["friendship"] ?? 0;
     final distance = scores["distance"] ?? 0;
+final payload = {
+  "type": "interactive_story_result",
+  "childNickname": _safeNickname,
+  "personality": widget.personality,
+  "avatarName": _safeAvatarName,
+  "storyId": "interactive_story",
+  "storyTitle": _story.title,
+  "storyMessage": endingTitle,
 
-    final payload = {
-      "type": "interactive_story_result",
-      "childNickname": _safeNickname,
-      "personality": widget.personality,
-      "avatarName": _safeAvatarName,
-      "storyId": "interactive_story",
-      "storyTitle": _story.title,
-      "storyMessage": endingTitle,
-      "selectedChoice":
-          "Empati: $empathy/10, Arkadaşlık: $friendship/10, Mesafe: $distance/10",
-      "dominantArea": analysis["dominantArea"],
-      "emotionalMeaning": analysis["emotionalMeaning"],
-      "developmentComment": analysis["developmentComment"],
-      "parentSuggestion": analysis["parentSuggestion"],
-      "parentPanelText":
-          "İnteraktif masal sonucu: $_safeNickname, '${_story.title}' masalını '$endingTitle' sonucu ile tamamladı.\n\n"
-          "Puan özeti: Empati $empathy/10, Arkadaşlık $friendship/10, Mesafe $distance/10\n\n"
-          "Baskın gelişim alanı: ${analysis["dominantArea"]}\n\n"
-          "Duygusal gözlem: ${analysis["emotionalMeaning"]}\n\n"
-          "Gelişimsel yorum: ${analysis["developmentComment"]}\n\n"
-          "Ebeveyn önerisi: ${analysis["parentSuggestion"]}\n\n"
-          "Not: Bu çıktı psikolojik tanı değildir; çocuğun uygulama içindeki seçim davranışlarına dayalı gelişimsel gözlem niteliğindedir.",
-      "createdAt": DateTime.now().toIso8601String(),
-    };
+  "analysisModel": "llama-3.3-70b-versatile",
+  "useAiAnalysis": true,
+  "analysisSource": "groq",
 
+  "rawScores": {
+    "empathy": empathy,
+    "friendship": friendship,
+    "distance": distance,
+  },
+
+  "aiPromptData": {
+    "childNickname": _safeNickname,
+    "storyTitle": _story.title,
+    "endingTitle": endingTitle,
+    "empathy": empathy,
+    "friendship": friendship,
+    "distance": distance,
+    "dominantArea": analysis["dominantArea"],
+    "emotionalMeaning": analysis["emotionalMeaning"],
+    "developmentComment": analysis["developmentComment"],
+    "parentSuggestion": analysis["parentSuggestion"],
+  },
+
+  "selectedChoice":
+      "Empati: $empathy/10, Arkadaşlık: $friendship/10, Mesafe: $distance/10",
+  "dominantArea": analysis["dominantArea"],
+  "emotionalMeaning": analysis["emotionalMeaning"],
+  "developmentComment": analysis["developmentComment"],
+  "parentSuggestion": analysis["parentSuggestion"],
+  "parentPanelText":
+      "İnteraktif masal sonucu: $_safeNickname, '${_story.title}' masalını '$endingTitle' sonucu ile tamamladı.\n\n"
+      "Puan özeti: Empati $empathy/10, Arkadaşlık $friendship/10, Mesafe $distance/10\n\n"
+      "Baskın gelişim alanı: ${analysis["dominantArea"]}\n\n"
+      "Duygusal gözlem: ${analysis["emotionalMeaning"]}\n\n"
+      "Gelişimsel yorum: ${analysis["developmentComment"]}\n\n"
+      "Ebeveyn önerisi: ${analysis["parentSuggestion"]}\n\n"
+      "Not: Bu çıktı psikolojik tanı değildir; çocuğun uygulama içindeki seçim davranışlarına dayalı gelişimsel gözlem niteliğindedir.",
+  "createdAt": DateTime.now().toIso8601String(),
+};
     try {
       final response = await http
           .post(
