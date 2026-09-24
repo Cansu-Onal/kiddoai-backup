@@ -1,6 +1,5 @@
 # KiddoLia — AI-Powered Educational Application
 
-![KiddoLia Preview](flutter_01.png)
 
 KiddoLia is an AI-powered educational application designed for children aged 4–6. It combines conversational AI, voice interaction, visual recognition, interactive stories, creative activities, mini-games, and parental controls in a child-friendly mobile experience.
 
